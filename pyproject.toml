@@ -28,10 +28,9 @@ include = ["megatron_speech*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = [
-    "gpu: needs at least one CUDA device",
-    "multigpu: needs at least two CUDA devices (run with python -m torch.distributed.run)",
-]
+log_cli = true
+log_cli_level = "INFO"
+markers = ["gpu: needs at least one CUDA device"]
 
 [tool.ruff]
 line-length = 100
@@ -51,6 +50,7 @@ select = [
     "ANN",  # flake8-annotations: every parameter and return value is annotated
     "D101", "D102", "D103", "D105", "D107",  # pydocstyle: every class, function and method has a docstring
     "TID",  # flake8-tidy-imports: the banned APIs below
+    "T20",  # flake8-print: log with logging instead of print
     "RUF",  # Ruff-specific rules
 ]
 

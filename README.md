@@ -25,6 +25,15 @@ CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh python -m torch.distributed.run --npro
 - apptainer がないサーバーでは singularity を使う
 - リポジトリと `HF_HOME` があるファイルシステムのマウント点を bind する（singularity は自動では bind しない）
 
+## テスト
+
+```bash
+apptainer/run.sh python -m pytest tests
+CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh python -m torch.distributed.run --nproc-per-node 2 -m pytest tests
+```
+
+2 つ目のコマンドは、2 GPU の tensor parallel（TP=2）でテストを実行する。
+
 ## 設定ファイル
 
 `--config` に渡す YAML の書き方は [docs/config.md](docs/config.md) にある。
@@ -36,7 +45,9 @@ third_party/Megatron-LM/    上流の固定コミット（git submodule status �
 patches/                    Megatron-LM へのパッチ（現在は空）
 apptainer/                  コンテナの起動スクリプトと venv の構築
 megatron_speech/
+  components/               音声 LLM の部品（projector など）
   training/                 学習エントリポイント、設定ファイルの読み込み、recipe
+tests/                      テスト
 configs/                    設定ファイルの例
 docs/                       文書
 ```
