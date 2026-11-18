@@ -8,7 +8,7 @@ from megatron.core.transformer import TransformerConfig
 from transformers import Blip2QFormerConfig, Blip2QFormerModel
 
 from megatron_speech.components.projectors.qformer import QFormerProjector, QFormerProjectorConfig
-from tests.comparison import calc_relative_error, take_shard
+from tests.reference_comparison import calc_relative_error, take_shard
 
 pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)

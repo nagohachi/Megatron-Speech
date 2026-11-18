@@ -22,7 +22,7 @@ from megatron_speech.components.encoders.qwen3_asr import (
     Qwen3ASREncoderConfig,
     Qwen3ASREncoderInputs,
 )
-from tests.comparison import calc_relative_error, take_shard
+from tests.reference_comparison import calc_relative_error, take_shard
 
 logger = logging.getLogger(__name__)
 
