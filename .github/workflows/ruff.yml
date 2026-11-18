@@ -13,11 +13,11 @@ jobs:
 
       # The Ruff version is read from the dev dependencies in pyproject.toml.
       - name: ruff check
-        uses: astral-sh/ruff-action@v4
+        uses: astral-sh/ruff-action@v4.1.0
         with:
           args: check
 
       - name: ruff format --check
-        uses: astral-sh/ruff-action@v4
+        uses: astral-sh/ruff-action@v4.1.0
         with:
           args: format --check
