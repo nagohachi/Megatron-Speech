@@ -1,8 +1,6 @@
 # Megatron-Speech
 
-音声言語モデルを Megatron Core（Megatron-LM）で学習するためのフレームワーク。Megatron-LM は
-`third_party/Megatron-LM` に submodule として固定し、改変せずに使う。Megatron の API を呼ぶ箇所は
-`megatron_speech/compat.py` に集める。
+音声言語モデルを Megatron Core（Megatron-LM）で学習するためのフレームワーク。
 
 ## 環境構築
 
