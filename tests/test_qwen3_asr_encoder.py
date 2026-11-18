@@ -202,6 +202,14 @@ def test_windows_match_hf() -> None:
     assert inputs.input_features.shape == (len(chunk_lengths), 1, chunk_frames)
 
 
+@pytest.mark.parametrize("frames", [[], [0, 0]], ids=["no-utterances", "empty-utterances"])
+def test_rejects_batch_without_frames(frames: list[int]) -> None:
+    """A batch without frames has no encoder inputs; MIMO skips the encoder for it."""
+    mels = [torch.zeros(ENCODER_CONFIG.num_mel_bins, n) for n in frames]
+    with pytest.raises(ValueError, match="no utterance has frames"):
+        Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG)
+
+
 @pytest.mark.gpu
 def test_output_matches_hf(
     encoder: Qwen3ASREncoder, reference: HFEncoder, mels: list[torch.Tensor], dtype: torch.dtype

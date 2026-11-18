@@ -102,8 +102,13 @@ class Qwen3ASREncoderInputs:
         """Cut ``[num_mel_bins, num_frames]`` log-mels into chunks and attention windows.
 
         Windows start at the first token of each utterance and hold ``window_tokens`` tokens;
-        the last window of an utterance may be shorter.
+        the last window of an utterance may be shorter. A batch without frames has no encoder
+        inputs: its audio inputs are None, and MIMO then does not call the encoder.
         """
+        if not any(mel.shape[1] for mel in mels):
+            raise ValueError(
+                "no utterance has frames; give MIMO None as the audio inputs of such a batch"
+            )
         chunk_frames = config.chunk_frames
         chunks, token_index, window_lengths = [], [], []
         for mel in mels:
