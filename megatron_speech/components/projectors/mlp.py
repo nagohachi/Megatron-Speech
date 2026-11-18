@@ -56,6 +56,20 @@ class MLPProjector(MegatronModule):
             raise ValueError(f"num_layers must be at least 1, got {num_layers}")
         if num_layers > 1 and projector_config.hidden_size is None:
             raise ValueError("hidden_size is required when num_layers > 1")
+        sizes = [
+            projector_config.input_size,
+            *[projector_config.hidden_size] * (num_layers - 1),
+            projector_config.output_size,
+        ]
+        tp_size = llm_config.tensor_model_parallel_size
+        # Column-parallel layers (index 0, 2, ...) split their output features over the ranks.
+        for size in sizes[1::2]:
+            if size % tp_size:
+                raise ValueError(
+                    f"{size} features cannot be split over {tp_size} tensor parallel ranks; "
+                    "hidden_size, and output_size when num_layers is odd, must be divisible by "
+                    "the TP size"
+                )
         config = build_component_transformer_config(
             llm_config,
             # The layers below are built directly; TransformerConfig only requires these
@@ -67,11 +81,6 @@ class MLPProjector(MegatronModule):
         super().__init__(config=config)
         self.activation_func = ACTIVATIONS[projector_config.activation]
         tp_group = pg_collection.tp if pg_collection is not None else None
-        sizes = [
-            projector_config.input_size,
-            *[projector_config.hidden_size] * (num_layers - 1),
-            projector_config.output_size,
-        ]
         self.layers = torch.nn.ModuleList()
         for index, (in_features, out_features) in enumerate(pairwise(sizes)):
             if index % 2 == 0:

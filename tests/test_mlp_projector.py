@@ -105,3 +105,20 @@ def test_accepts_zero_tokens(tensor_parallel_size: int) -> None:
     projector_config = MLPProjectorConfig(input_size=48, output_size=64, hidden_size=96)
     projector = MLPProjector(projector_config, llm_config).cuda()
     assert projector(torch.zeros(0, 48, device="cuda")).shape == (0, 64)
+
+
+def test_rejects_features_not_divisible_by_tp(tensor_parallel_size: int) -> None:
+    """A column-parallel layer whose output features do not split evenly raises ValueError."""
+    if tensor_parallel_size == 1:
+        pytest.skip("every size splits over one rank")
+    llm_config = TransformerConfig(
+        num_layers=1,
+        hidden_size=64,
+        num_attention_heads=tensor_parallel_size,
+        tensor_model_parallel_size=tensor_parallel_size,
+    )
+    projector_config = MLPProjectorConfig(
+        input_size=48, output_size=64, hidden_size=tensor_parallel_size * 48 + 1
+    )
+    with pytest.raises(ValueError, match="cannot be split"):
+        MLPProjector(projector_config, llm_config)
