@@ -22,7 +22,7 @@ CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh python -m torch.distributed.run --npro
 
 `run.sh` は次の処理をする。
 
-- apptainer がないサーバーでは singularity を使う（sacs04 などは apptainer、sacs21 などは singularity のみ）
+- apptainer がないサーバーでは singularity を使う
 - リポジトリと `HF_HOME` があるファイルシステムのマウント点を bind する（singularity は自動では bind しない）
 - `TRITON_LIBCUDA_PATH=/.singularity.d/libs`、`CUDA_DEVICE_MAX_CONNECTIONS=1` を設定する
 
