@@ -56,6 +56,8 @@ class Qwen3ASREncoderConfig:
                 f"hidden_size={self.hidden_size} is not a multiple of "
                 f"num_attention_heads={self.num_attention_heads}"
             )
+        if self.activation not in ACTIVATIONS:
+            raise ValueError(f"activation={self.activation!r} is not one of {sorted(ACTIVATIONS)}")
 
     @property
     def chunk_frames(self) -> int:

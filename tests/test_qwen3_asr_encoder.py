@@ -283,16 +283,23 @@ def test_gradients_match_hf(
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("num_attention_heads", 3), ("n_window", 0), ("n_window_infer", 150), ("n_window_infer", 0)],
+    [
+        ("num_attention_heads", 3),
+        ("n_window", 0),
+        ("n_window_infer", 150),
+        ("n_window_infer", 0),
+        ("activation", "swish"),
+    ],
     ids=[
         "hidden-not-multiple-of-heads",
         "no-chunk-frames",
         "window-not-multiple-of-chunk",
         "no-window",
+        "unknown-activation",
     ],
 )
-def test_config_rejects_invalid_shapes(field: str, value: int) -> None:
-    """Shapes that the encoder or its inputs cannot use raise ValueError at construction."""
+def test_config_rejects_invalid_values(field: str, value: int | str) -> None:
+    """Values that the encoder or its inputs cannot use raise ValueError at construction."""
     with pytest.raises(ValueError, match=field):
         replace(ENCODER_CONFIG, **{field: value})
 
