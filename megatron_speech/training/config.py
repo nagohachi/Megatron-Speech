@@ -25,21 +25,27 @@ class RunConfigLoader:
 
     @classmethod
     def load(cls, path: Path, overrides: list[str] | None = None) -> ConfigDict:
-        cfg = cls.load_file(path)
-        cfg = cls.apply_overrides(cfg, overrides or [])
-        cfg.setdefault("model", {})
-        cfg.setdefault("data", {})
-        cfg.setdefault("megatron", {})
-        return cfg
-
-    @classmethod
-    def load_file(cls, path: Path) -> ConfigDict:
         with open(path) as f:
             cfg = yaml.safe_load(f) or {}
         base = cfg.pop("base", None)
         if base is not None:
             base_path = (path.parent / base) if not Path(base).is_absolute() else Path(base)
-            cfg = cls.merge_dicts(cls.load_file(base_path), cfg)
+            cfg = cls.merge_dicts(cls.load(base_path), cfg)
+        for token in overrides or []:
+            if "=" not in token:
+                raise ValueError(f"override must look like key.subkey=value, got {token!r}")
+            dotted, raw = token.split("=", 1)
+            value = yaml.safe_load(raw) if raw != "" else None
+            node = cfg
+            keys = dotted.split(".")
+            for key in keys[:-1]:
+                node = node.setdefault(key, {})
+                if not isinstance(node, dict):
+                    raise ValueError(f"cannot set {dotted}: {key} is not a mapping")
+            node[keys[-1]] = value
+        cfg.setdefault("model", {})
+        cfg.setdefault("data", {})
+        cfg.setdefault("megatron", {})
         return cfg
 
     @classmethod
@@ -52,20 +58,3 @@ class RunConfigLoader:
             else:
                 out[key] = copy.deepcopy(value)
         return out
-
-    @staticmethod
-    def apply_overrides(cfg: ConfigDict, overrides: list[str]) -> ConfigDict:
-        cfg = copy.deepcopy(cfg)
-        for token in overrides:
-            if "=" not in token:
-                raise ValueError(f"override must look like key.subkey=value, got {token!r}")
-            dotted, raw = token.split("=", 1)
-            value = yaml.safe_load(raw) if raw != "" else None
-            node = cfg
-            keys = dotted.split(".")
-            for key in keys[:-1]:
-                node = node.setdefault(key, {})
-                if not isinstance(node, dict):
-                    raise ValueError(f"cannot set {dotted}: {key} is not a mapping")
-            node[keys[-1]] = value
-        return cfg
