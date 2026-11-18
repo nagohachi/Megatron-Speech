@@ -88,12 +88,6 @@ def build_pretrain_config(args, model_cfg, data_cfg=None):
     return cfg
 
 
-def get_args():
-    from megatron.training import get_args as _get_args
-
-    return _get_args()
-
-
 def get_run_config():
     from megatron.training.global_vars import get_run_config as _get_run_config
 
