@@ -30,6 +30,7 @@ Ruff enforces the mechanical rules (`ruff check` and `ruff format --check`, run 
 
 ## Documentation (README.md, docs/ and other Markdown files)
 
+- Japanese documents keep established technical terms in English, such as component, projector and attention, instead of translating them (部品 for component). (PR #9 review.)
 - Do not break lines inside a sentence. Write each paragraph and each list item of Markdown prose on one line.
 - The opening of README.md is one sentence on what the repository is. It does not describe internal design, such as which module calls which Megatron-LM API.
 - Explanations of file formats and design, such as the run config format, go in `docs/`; README.md links to them.
