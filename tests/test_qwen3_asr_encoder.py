@@ -283,20 +283,46 @@ def test_gradients_match_hf(
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("num_attention_heads", 3), ("n_window_infer", 150)],
-    ids=["hidden-not-multiple-of-heads", "window-not-multiple-of-chunk"],
+    [("num_attention_heads", 3), ("n_window", 0), ("n_window_infer", 150), ("n_window_infer", 0)],
+    ids=[
+        "hidden-not-multiple-of-heads",
+        "no-chunk-frames",
+        "window-not-multiple-of-chunk",
+        "no-window",
+    ],
 )
-def test_rejects_invalid_config(field: str, value: int) -> None:
-    """Head counts that do not divide hidden_size and windows that cut chunks raise ValueError."""
-    llm_config = TransformerConfig(num_layers=1, hidden_size=64, num_attention_heads=1)
+def test_config_rejects_invalid_shapes(field: str, value: int) -> None:
+    """Shapes that the encoder or its inputs cannot use raise ValueError at construction."""
     with pytest.raises(ValueError, match=field):
+        replace(ENCODER_CONFIG, **{field: value})
+
+
+@pytest.mark.parametrize(
+    ("tp_size", "field", "value"),
+    [(3, "num_attention_heads", 4), (2, "ffn_hidden_size", 129)],
+    ids=["heads", "ffn"],
+)
+def test_rejects_sizes_not_divisible_by_tp(tp_size: int, field: str, value: int) -> None:
+    """Heads and MLP features that do not split evenly over the TP ranks raise ValueError."""
+    llm_config = TransformerConfig(
+        num_layers=1,
+        hidden_size=64,
+        num_attention_heads=tp_size,
+        tensor_model_parallel_size=tp_size,
+    )
+    with pytest.raises(ValueError, match=f"{field}={value} cannot be split"):
         Qwen3ASREncoder(replace(ENCODER_CONFIG, **{field: value}), llm_config)
 
 
-def test_rejects_heads_not_divisible_by_tp() -> None:
-    """Attention heads that do not split evenly over the TP ranks raise ValueError."""
+@pytest.mark.gpu
+def test_rejects_pg_collection_of_another_tp_size(tensor_parallel_size: int) -> None:
+    """The TP group in pg_collection must have as many ranks as llm_config says."""
     llm_config = TransformerConfig(
-        num_layers=1, hidden_size=64, num_attention_heads=3, tensor_model_parallel_size=3
+        num_layers=1,
+        hidden_size=64,
+        num_attention_heads=tensor_parallel_size + 1,
+        tensor_model_parallel_size=tensor_parallel_size + 1,
     )
-    with pytest.raises(ValueError, match="num_attention_heads=4 cannot be split"):
-        Qwen3ASREncoder(ENCODER_CONFIG, llm_config)
+    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+    with pytest.raises(ValueError, match=r"pg_collection\.tp has"):
+        Qwen3ASREncoder(ENCODER_CONFIG, llm_config, pg_collection)

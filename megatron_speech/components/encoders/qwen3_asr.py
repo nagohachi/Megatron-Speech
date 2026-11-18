@@ -42,6 +42,21 @@ class Qwen3ASREncoderConfig:
     # Hugging Face builds the LayerNorms with the PyTorch default epsilon.
     layernorm_epsilon: float = 1e-5
 
+    def __post_init__(self) -> None:
+        """Raise ValueError for shapes that the encoder or its inputs cannot use."""
+        if self.n_window < 1:
+            raise ValueError(f"n_window must be at least 1, got {self.n_window}")
+        if self.n_window_infer < self.chunk_frames or self.n_window_infer % self.chunk_frames:
+            raise ValueError(
+                f"n_window_infer={self.n_window_infer} must be a positive multiple of "
+                f"2 * n_window={self.chunk_frames}"
+            )
+        if self.hidden_size % self.num_attention_heads:
+            raise ValueError(
+                f"hidden_size={self.hidden_size} is not a multiple of "
+                f"num_attention_heads={self.num_attention_heads}"
+            )
+
     @property
     def chunk_frames(self) -> int:
         """Mel frames per chunk."""
@@ -169,22 +184,12 @@ class Qwen3ASREncoder(MegatronModule):
                     f"pg_collection.tp has {pg_collection.tp.size()} ranks, but "
                     f"llm_config.tensor_model_parallel_size is {tp_size}"
                 )
-            if encoder_config.hidden_size % encoder_config.num_attention_heads:
-                raise ValueError(
-                    f"hidden_size={encoder_config.hidden_size} is not a multiple of "
-                    f"num_attention_heads={encoder_config.num_attention_heads}"
-                )
             for name in ("num_attention_heads", "ffn_hidden_size"):
                 if getattr(encoder_config, name) % tp_size:
                     raise ValueError(
                         f"{name}={getattr(encoder_config, name)} cannot be split over "
                         f"{tp_size} tensor parallel ranks"
                     )
-            if encoder_config.n_window_infer % encoder_config.chunk_frames:
-                raise ValueError(
-                    f"n_window_infer={encoder_config.n_window_infer} is not a multiple of "
-                    f"2 * n_window={encoder_config.chunk_frames}"
-                )
 
         def build_position_embedding() -> torch.Tensor:
             """Sinusoidal ``[tokens_per_chunk, hidden_size]`` embedding, as Hugging Face's."""
