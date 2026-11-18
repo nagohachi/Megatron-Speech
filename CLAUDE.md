@@ -50,5 +50,5 @@ The maintainer reviews design as well as rules. For new and changed code, the re
 - Numerical code (layers, components, losses) is compared with a reference implementation, plain PyTorch or Hugging Face, holding the same weights. The test compares the outputs and the gradients, in fp32 and bf16, with TP=1 and TP=2.
 - Tests include the edge inputs that training produces, such as a batch without audio tokens.
 - Tests log the measured errors with `logging`, and the pull request description reports them.
-- Tests reach the module under test through its own attributes, not through attributes inside Megatron-LM classes.
+- Tests reach the module under test through its own attributes or the names of its `named_parameters()`, not through attributes inside Megatron-LM classes. Parameter names such as `transformer.layers.0.self_attention.linear_qkv.weight` are fine: pairing fused Megatron weights with Hugging Face weights needs them.
 - A test function holds only the checks of one property, such as the outputs or the gradients. Setup that several tests share, such as building the models, copying the reference weights and making the inputs, goes into fixtures. (PR #5 split a 120-line test this way.)

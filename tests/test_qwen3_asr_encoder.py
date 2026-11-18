@@ -68,7 +68,9 @@ def interleave_qkv(tensors: list[torch.Tensor]) -> torch.Tensor:
 def list_weight_pairs(encoder: Qwen3ASREncoder, reference: HFEncoder) -> list[WeightPair]:
     """Pair every parameter of ``encoder`` with the reference parameters it is made of.
 
-    Both sides are looked up by name in ``named_parameters()``.
+    Both sides are looked up by name in ``named_parameters()``. The names on our side come
+    from Megatron's layers (``transformer.layers.0.self_attention.linear_qkv.weight``); only
+    they tell which fused weight holds which Hugging Face weights.
     """
     ours = dict(encoder.named_parameters())
     theirs = dict(reference.named_parameters())
