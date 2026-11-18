@@ -31,8 +31,7 @@ def merge_dicts(base: ConfigDict, override: ConfigDict) -> ConfigDict:
     return out
 
 
-def load_config_file(path: str | Path) -> ConfigDict:
-    path = Path(path)
+def load_config_file(path: Path) -> ConfigDict:
     with open(path) as f:
         cfg = yaml.safe_load(f) or {}
     base = cfg.pop("base", None)
@@ -59,7 +58,7 @@ def apply_overrides(cfg: ConfigDict, overrides: list[str]) -> ConfigDict:
     return cfg
 
 
-def load_config(path: str | Path, overrides: list[str] | None = None) -> ConfigDict:
+def load_config(path: Path, overrides: list[str] | None = None) -> ConfigDict:
     cfg = load_config_file(path)
     cfg = apply_overrides(cfg, overrides or [])
     cfg.setdefault("model", {})

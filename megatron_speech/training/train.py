@@ -5,6 +5,7 @@
 """
 
 import argparse
+from pathlib import Path
 
 from megatron_speech.training.config import load_config
 from megatron_speech.training.recipes import get_recipe
@@ -12,7 +13,7 @@ from megatron_speech.training.recipes import get_recipe
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument("--config", required=True, help="run config (YAML)")
+    parser.add_argument("--config", type=Path, required=True, help="run config (YAML)")
     parser.add_argument("overrides", nargs="*", help="dotted overrides, e.g. megatron.lr=1e-5")
     ns = parser.parse_args(argv)
 
