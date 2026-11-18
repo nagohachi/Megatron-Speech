@@ -4,6 +4,7 @@ from itertools import pairwise
 import pytest
 import torch
 from megatron.core import parallel_state
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import TransformerConfig
 
 from megatron_speech.components.projectors.mlp import ACTIVATIONS, MLPProjector, MLPProjectorConfig
@@ -37,7 +38,8 @@ def test_matches_torch_linear_layers(
         hidden_size=96,
         activation=activation,
     )
-    projector = MLPProjector(projector_config, llm_config).cuda()
+    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+    projector = MLPProjector(projector_config, llm_config, pg_collection).cuda()
 
     torch.manual_seed(0)  # the same reference weights and inputs on every rank
     sizes = [48, *[96] * (num_layers - 1), 64]
@@ -122,3 +124,17 @@ def test_rejects_features_not_divisible_by_tp(tensor_parallel_size: int) -> None
     )
     with pytest.raises(ValueError, match="cannot be split"):
         MLPProjector(projector_config, llm_config)
+
+
+def test_rejects_pg_collection_of_another_tp_size(tensor_parallel_size: int) -> None:
+    """The TP group in pg_collection must have as many ranks as llm_config says."""
+    llm_config = TransformerConfig(
+        num_layers=1,
+        hidden_size=64,
+        num_attention_heads=tensor_parallel_size + 1,
+        tensor_model_parallel_size=tensor_parallel_size + 1,
+    )
+    projector_config = MLPProjectorConfig(input_size=48, output_size=64, hidden_size=96)
+    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+    with pytest.raises(ValueError, match=r"pg_collection\.tp has"):
+        MLPProjector(projector_config, llm_config, pg_collection)

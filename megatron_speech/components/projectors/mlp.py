@@ -62,6 +62,11 @@ class MLPProjector(MegatronModule):
             projector_config.output_size,
         ]
         tp_size = llm_config.tensor_model_parallel_size
+        if pg_collection is not None and pg_collection.tp.size() != tp_size:
+            raise ValueError(
+                f"pg_collection.tp has {pg_collection.tp.size()} ranks, but "
+                f"llm_config.tensor_model_parallel_size is {tp_size}"
+            )
         # Column-parallel layers (index 0, 2, ...) split their output features over the ranks.
         for size in sizes[1::2]:
             if size % tp_size:
