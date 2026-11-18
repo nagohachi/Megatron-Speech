@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 5e-2}
 # Several chunks and windows, a short last chunk, one chunk, a partial chunk and one frame.
 UTTERANCE_FRAMES = [250, 100, 37, 1]
-# Windows of 200 frames (26 tokens) so that the 250-frame utterance spans two of them.
 # Names of the convolutions and the linear layer after them, the same on both sides.
 CONVOLUTIONS = ("conv2d1", "conv2d2", "conv2d3", "conv_out")
+# Windows of 200 frames (26 tokens) so that the 250-frame utterance spans two of them.
 ENCODER_CONFIG = Qwen3ASREncoderConfig(
     num_mel_bins=32,
     hidden_size=64,
