@@ -19,7 +19,7 @@ INHERITED_FIELDS = (
 
 
 def build_component_transformer_config(
-    llm_config: TransformerConfig, **arch: int | bool
+    llm_config: TransformerConfig, **arch: int | float | bool
 ) -> TransformerConfig:
     """Build the ``TransformerConfig`` of a component.
 
