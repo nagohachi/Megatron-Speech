@@ -7,9 +7,6 @@ name = "megatron-speech"
 version = "0.1.0"
 description = "Training speech language models on Megatron Core"
 requires-python = ">=3.12"
-# torch, transformer_engine and flash-attn come from the NGC PyTorch container
-# (apptainer/run.sh). Megatron-LM is put on sys.path by a .pth file that
-# apptainer/setup_venv.sh writes, so it is not listed here.
 dependencies = [
     "transformers>=5.22",
     "safetensors",
