@@ -49,14 +49,17 @@ def setup_speech_llm(run_cfg: dict[str, Any]):
     return args, model_cfg
 
 
-def build_speech_llm_for_eval(model_cfg, load_hf: bool = True, dtype=torch.bfloat16):
+def build_speech_llm_for_eval(model_cfg, load_hf: bool = True, apply_peft: bool = True, dtype=torch.bfloat16):
     """Build the MIMO speech LLM on the current GPU with HF weights, without DDP wrapping."""
     from megatron_speech.bridges import get_bridge_for_model_section
     from megatron_speech.models.speech_llm import build_speech_llm
+    from megatron_speech.peft import apply_peft as _apply_peft
 
     model = build_speech_llm(model_cfg)
     if load_hf:
         get_bridge_for_model_section(model_cfg.speech).load_into(model, model_cfg.speech)
+    if apply_peft:
+        _apply_peft(model, model_cfg.speech.get("peft") or {})
     model = model.cuda().to(dtype)
     model.eval()
     return model

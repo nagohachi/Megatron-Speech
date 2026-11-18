@@ -129,18 +129,20 @@ def build_speech_llm(cfg: SpeechLLMModelConfig, pg_collection=None) -> MimoModel
 
 
 class SpeechLLMBuilder(ModelBuilder):
-    """Builds the speech LLM and loads Hugging Face weights before DDP wrapping."""
+    """Builds the speech LLM, loads Hugging Face weights and applies PEFT before DDP wrapping."""
 
     def build_model(self, pg_collection, pre_process=None, post_process=None, vp_stage=None):
         return build_speech_llm(self._model_config, pg_collection)
 
     def _pre_wrap_hooks(self) -> list[Callable]:
         from megatron_speech.bridges import load_hf_weights_hook
+        from megatron_speech.peft import apply_peft_hook
 
         hooks = list(self._model_config.pre_wrap_hooks)
         speech = self._model_config.speech
         if speech.get("hf_init"):
             hooks.append(load_hf_weights_hook(speech))
+        hooks.append(apply_peft_hook(speech.get("peft") or {}))
         return hooks
 
     def build_distributed_models(
