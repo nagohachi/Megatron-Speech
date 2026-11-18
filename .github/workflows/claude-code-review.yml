@@ -35,23 +35,28 @@ jobs:
             components instead of hard-coded layer counts, removed pass-through wrappers and
             helpers with one caller, and asked for tests against reference implementations.
 
-            1. Read CLAUDE.md, the pull request (`gh pr view`), its diff (`gh pr diff`) and the
-               files that the diff changes. Read the review comments already on the pull
-               request (`gh pr view --comments` and
-               `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments`)
-               and do not raise an issue again that one of them already raised.
-            2. Check the changed code for:
+            1. Before anything else, fetch every comment already on the pull request:
+               `gh api --paginate repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments`
+               (inline review comments and their replies) and
+               `gh api --paginate repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments`
+               (conversation comments). List the issues they raise and how each was answered.
+               Do not raise any of those issues again, also when the answer kept the code and
+               gave a reason.
+            2. Read CLAUDE.md, the pull request (`gh pr view`), its diff (`gh pr diff`) and the
+               files that the diff changes.
+            3. Check the changed code for:
                - bugs: code that fails or gives wrong results;
                - violations of the rules in CLAUDE.md, quoting the rule;
                - the questions in the "Design" section of CLAUDE.md;
                - the requirements in the "Tests" section of CLAUDE.md.
                Every rule and question in CLAUDE.md counts, including the ones about naming,
                structure, comments and documentation. Skip what Ruff reports; CI runs it.
-            3. Post one inline comment per issue on the line it concerns
+            4. Post one inline comment per issue on the line it concerns
                (`mcp__github_inline_comment__create_inline_comment`), saying what is wrong, why,
                and what to change. Then post one summary comment (`gh pr comment`) that lists
                the issues from most to least important, or says that none were found and what
-               was checked.
+               was checked. Start the summary with the number of inline comments and of
+               conversation comments read in step 1.
 
             Write the comments in Japanese. Do not change any file.
           claude_args: |
