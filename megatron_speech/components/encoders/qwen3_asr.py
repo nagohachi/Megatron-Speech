@@ -194,24 +194,28 @@ class Qwen3ASREncoder(MegatronModule):
             scaled_time = torch.arange(encoder_config.tokens_per_chunk)[:, None] * inv_timescales
             return torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
 
+        def build_transformer_config() -> TransformerConfig:
+            """Pre-LayerNorm layers with biases, LayerNorm and the configured MLP activation."""
+            return build_component_transformer_config(
+                llm_config,
+                num_layers=encoder_config.num_layers,
+                hidden_size=encoder_config.hidden_size,
+                num_attention_heads=encoder_config.num_attention_heads,
+                num_query_groups=encoder_config.num_attention_heads,
+                kv_channels=encoder_config.hidden_size // encoder_config.num_attention_heads,
+                ffn_hidden_size=encoder_config.ffn_hidden_size,
+                normalization="LayerNorm",
+                layernorm_epsilon=encoder_config.layernorm_epsilon,
+                add_bias_linear=True,
+                add_qkv_bias=True,
+                gated_linear_unit=False,
+                activation_func=ACTIVATIONS[encoder_config.activation],
+                # The fused bias-GELU kernel uses the tanh approximation of GELU.
+                bias_activation_fusion=False,
+            )
+
         check_config()
-        config = build_component_transformer_config(
-            llm_config,
-            num_layers=encoder_config.num_layers,
-            hidden_size=encoder_config.hidden_size,
-            num_attention_heads=encoder_config.num_attention_heads,
-            num_query_groups=encoder_config.num_attention_heads,
-            kv_channels=encoder_config.hidden_size // encoder_config.num_attention_heads,
-            ffn_hidden_size=encoder_config.ffn_hidden_size,
-            normalization="LayerNorm",
-            layernorm_epsilon=encoder_config.layernorm_epsilon,
-            add_bias_linear=True,
-            add_qkv_bias=True,
-            gated_linear_unit=False,
-            activation_func=ACTIVATIONS[encoder_config.activation],
-            # The fused bias-GELU kernel uses the tanh approximation of GELU.
-            bias_activation_fusion=False,
-        )
+        config = build_transformer_config()
         super().__init__(config=config)
         channels = encoder_config.downsample_hidden_size
         conv_kwargs = {"kernel_size": 3, "stride": 2, "padding": 1, "dtype": config.params_dtype}
