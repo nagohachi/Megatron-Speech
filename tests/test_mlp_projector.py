@@ -4,12 +4,12 @@ from itertools import pairwise
 
 import pytest
 import torch
-from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import TransformerConfig
 
 from megatron_speech.components.activations import ACTIVATIONS
 from megatron_speech.components.projectors.mlp import MLPProjector, MLPProjectorConfig
+from tests.comparison import calc_relative_error, take_shard
 
 pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)
@@ -50,14 +50,6 @@ def build_reference(projector_config: MLPProjectorConfig) -> list[torch.nn.Linea
         projector_config.output_size,
     ]
     return [torch.nn.Linear(n_in, n_out).cuda() for n_in, n_out in pairwise(sizes)]
-
-
-def take_shard(tensor: torch.Tensor, dim: int | None) -> torch.Tensor:
-    """This rank's part of ``tensor`` split along ``dim``, or all of it for None."""
-    if dim is None:
-        return tensor
-    size = parallel_state.get_tensor_model_parallel_world_size()
-    return tensor.chunk(size, dim)[parallel_state.get_tensor_model_parallel_rank()]
 
 
 def get_split_dim(index: int) -> int:
@@ -109,11 +101,6 @@ def run_reference(
         if index < len(reference) - 1:
             x = ACTIVATIONS[activation](x)
     return x
-
-
-def calc_relative_error(value: torch.Tensor, target: torch.Tensor) -> float:
-    """Largest absolute difference divided by the largest absolute target value."""
-    return ((value.float() - target).abs().max() / target.abs().max()).item()
 
 
 def test_output_matches_torch(

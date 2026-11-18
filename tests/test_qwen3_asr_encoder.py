@@ -4,7 +4,6 @@ from dataclasses import dataclass, replace
 
 import pytest
 import torch
-from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import TransformerConfig
 from transformers.models.qwen3_asr.configuration_qwen3_asr import (
@@ -18,6 +17,7 @@ from megatron_speech.components.encoders.qwen3_asr import (
     Qwen3ASREncoderConfig,
     Qwen3ASREncoderInputs,
 )
+from tests.comparison import calc_relative_error, take_shard
 
 logger = logging.getLogger(__name__)
 
@@ -108,14 +108,6 @@ def list_weight_pairs(encoder: Qwen3ASREncoder, reference: HFEncoder) -> list[We
     return pairs
 
 
-def take_shard(tensor: torch.Tensor, dim: int | None) -> torch.Tensor:
-    """This rank's part of ``tensor`` split along ``dim``, or all of it for None."""
-    if dim is None:
-        return tensor
-    size = parallel_state.get_tensor_model_parallel_world_size()
-    return tensor.chunk(size, dim)[parallel_state.get_tensor_model_parallel_rank()]
-
-
 @pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
 def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
     """Parameter dtype of the encoder under test."""
@@ -187,11 +179,6 @@ def run_reference(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tenso
     return reference(
         input_features=features.cuda(), input_features_mask=mask.cuda()
     ).last_hidden_state
-
-
-def calc_relative_error(value: torch.Tensor, target: torch.Tensor) -> float:
-    """Largest absolute difference divided by the largest absolute target value."""
-    return ((value.float() - target).abs().max() / target.abs().max()).item()
 
 
 def test_windows_match_hf() -> None:
