@@ -45,6 +45,7 @@ class QFormerProjectorConfig:
     ffn_hidden_size: int = 3072
     cross_attention_frequency: int = 1
     num_queries: int = 1
+    # SALMONN's window: round(0.333 s * 50 frames/s) = 17 frames of the Whisper encoder.
     window_size: int | None = 17
     activation: str = "gelu"
     layernorm_epsilon: float = 1e-12
