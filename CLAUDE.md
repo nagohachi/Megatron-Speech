@@ -10,6 +10,7 @@ Ruff enforces the mechanical rules (`ruff check` and `ruff format --check`, run 
 - Do not stand in for `Any` with `object` or with an unparameterized `dict`, `list`, `tuple` or `Callable`. Write the concrete type; for nested data such as YAML values, define a recursive alias with a `type` statement (`megatron_speech.training.config.ConfigValue`).
 - Do not write a wrapper whose body only calls a function of another library, such as `def get_args(): return megatron.training.get_args()`. Import the library function where it is used. A method that implements a hook of its base class (such as `GPTRecipe.build_model_config`) is not such a wrapper.
 - Functions that work on the same data are methods of one class, not separate module-level functions. For example, reading, merging and overriding a run config are methods of `RunConfigLoader`.
+- Do not split code out into a function or method whose only caller is one function in the same file; write the code in that function. Functions called from other files (`RunConfigLoader.load`) are not affected. The exceptions are a function that calls itself (`RunConfigLoader.merge_dicts`) and a method that subclasses override (the hooks of `Recipe`). Split the code out when a second caller appears.
 - A module covers one topic. Do not add a module that collects helpers for unrelated topics (argument parsing, process groups, checkpoints, ...); put each helper in the module or class that uses it.
 
 ## Comments

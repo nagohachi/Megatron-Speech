@@ -19,7 +19,7 @@ from megatron.training.argument_utils import (
     pretrain_cfg_container_from_args,
 )
 from megatron.training.arguments import parse_and_validate_args
-from megatron.training.config import DataConfig, PretrainConfigContainer
+from megatron.training.config import DataConfig
 from megatron.training.global_vars import set_run_config
 from megatron.training.models.base import ModelConfig
 from torch.utils.data import Dataset
@@ -74,44 +74,15 @@ class Recipe:
         return {}
 
     # -- driver ------------------------------------------------------------------------------
-    def parse_megatron_args(self) -> Namespace:
-        """Parse, validate and register Megatron's global ``args`` from ``megatron_arg_dict()``."""
-        saved_argv = sys.argv
-        sys.argv = [saved_argv[0], *self.convert_dict_to_argv(self.megatron_arg_dict())]
-        try:
-            return parse_and_validate_args(extra_args_provider=self.extra_args_provider())
-        finally:
-            sys.argv = saved_argv
-
-    def build_pretrain_config(self, args: Namespace) -> PretrainConfigContainer:
-        """Build the ``PretrainConfigContainer`` that ``pretrain()`` consumes and register it."""
-        cfg = pretrain_cfg_container_from_args(
-            args, self.build_model_config(args), data_cfg=self.build_data_config(args)
-        )
-        set_run_config(cfg)
-        return cfg
-
     def run(self) -> None:
-        """Parse Megatron's args, build the pretrain config and run Megatron's training loop."""
-        args = self.parse_megatron_args()
-        pretrain(
-            self.build_pretrain_config(args),
-            self.datasets_provider(),
-            ModelType.encoder_or_decoder,
-            self.forward_step(),
-            **self.pretrain_kwargs(),
-        )
+        """Parse Megatron's args, build the pretrain config and run Megatron's training loop.
 
-    @staticmethod
-    def convert_dict_to_argv(arg_dict: ConfigDict) -> list[str]:
-        """Convert ``{"micro-batch-size": 1, "bf16": True}`` into Megatron CLI tokens.
-
-        Keys may use ``-`` or ``_``. ``True`` becomes a bare flag, ``False``/``None`` are dropped
-        (write the explicit ``no-...`` flag to turn a default-on option off), lists become
-        space-separated values.
+        ``megatron_arg_dict()`` becomes Megatron CLI tokens: keys may use ``-`` or ``_``, ``True``
+        is a bare flag, ``False`` and ``None`` drop the flag (write the explicit ``no-...`` flag to
+        turn a default-on option off), and lists become space-separated values.
         """
         argv: list[str] = []
-        for key, value in arg_dict.items():
+        for key, value in self.megatron_arg_dict().items():
             flag = "--" + key.replace("_", "-")
             if value is None or value is False:
                 continue
@@ -122,7 +93,26 @@ class Recipe:
                 argv.extend(str(v) for v in value)
             else:
                 argv.extend([flag, str(value)])
-        return argv
+
+        # parse_and_validate_args reads sys.argv and registers the result for get_args().
+        saved_argv = sys.argv
+        sys.argv = [saved_argv[0], *argv]
+        try:
+            args = parse_and_validate_args(extra_args_provider=self.extra_args_provider())
+        finally:
+            sys.argv = saved_argv
+
+        pretrain_config = pretrain_cfg_container_from_args(
+            args, self.build_model_config(args), data_cfg=self.build_data_config(args)
+        )
+        set_run_config(pretrain_config)
+        pretrain(
+            pretrain_config,
+            self.datasets_provider(),
+            ModelType.encoder_or_decoder,
+            self.forward_step(),
+            **self.pretrain_kwargs(),
+        )
 
 
 class GPTRecipe(Recipe):
