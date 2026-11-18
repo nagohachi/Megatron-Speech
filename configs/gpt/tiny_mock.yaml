@@ -1,0 +1,33 @@
+# Small GPT on Megatron's mock dataset. Checks that the Megatron-Speech entry point
+# drives the upstream training loop.
+#
+#   CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh python -m torch.distributed.run --nproc-per-node 2 \
+#       -m megatron_speech.training.train --config configs/gpt/tiny_mock.yaml
+model:
+  type: gpt
+
+megatron:
+  num-layers: 4
+  hidden-size: 256
+  num-attention-heads: 4
+  seq-length: 512
+  max-position-embeddings: 512
+  position-embedding-type: rope
+  normalization: RMSNorm
+  swiglu: true
+  disable-bias-linear: true
+  micro-batch-size: 4
+  global-batch-size: 16
+  train-iters: 50
+  lr: 3.0e-4
+  min-lr: 3.0e-5
+  lr-decay-style: cosine
+  lr-warmup-iters: 5
+  bf16: true
+  use-distributed-optimizer: true
+  mock-data: true
+  tokenizer-type: NullTokenizer
+  vocab-size: 32000
+  log-interval: 10
+  eval-interval: 25
+  eval-iters: 2

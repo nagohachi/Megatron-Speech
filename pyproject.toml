@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "megatron-speech"
+version = "0.1.0"
+description = "Training speech language models on Megatron Core"
+requires-python = ">=3.12"
+dependencies = [
+    "transformers>=5.22",
+    "safetensors",
+    "lhotse>=1.33",
+    "soundfile",
+    "pyyaml",
+    "einops",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "peft", "datasets", "ruff==0.17.5"]
+logging = ["wandb", "tensorboard"]
+
+[tool.uv]
+exclude-dependencies = ["torch", "triton", "numpy", "transformer-engine", "flash-attn"]
+
+[tool.setuptools.packages.find]
+include = ["megatron_speech*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gpu: needs at least one CUDA device",
+    "multigpu: needs at least two CUDA devices (run with python -m torch.distributed.run)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["third_party"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade (e.g. Callable from collections.abc)
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "N",    # pep8-naming
+    "ANN",  # flake8-annotations: every parameter and return value is annotated
+    "D101", "D102", "D103", "D105", "D107",  # pydocstyle: every class, function and method has a docstring
+    "TID",  # flake8-tidy-imports: the banned APIs below
+    "RUF",  # Ruff-specific rules
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"__future__.annotations".msg = "Python 3.12 evaluates annotations without it."
+"typing.Any".msg = "Write the concrete type (megatron_speech.training.config.ConfigValue for YAML values)."
+
+[tool.ruff.lint.isort]
+known-first-party = ["megatron_speech"]

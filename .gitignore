@@ -221,3 +221,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Megatron-Speech
+apptainer/env.local.sh
+/outputs/
+/data/
+/logs/
