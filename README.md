@@ -27,16 +27,7 @@ CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh python -m torch.distributed.run --npro
 
 ## 設定ファイル
 
-`--config` に渡す YAML は 3 つの節からなる。
-
-```yaml
-model:     # 何を作るか（model.type で recipe を選ぶ）
-data:      # recipe ごとのデータ設定
-megatron:  # Megatron-LM のコマンドライン引数（{micro-batch-size: 1, bf16: true} の形）
-```
-
-コマンドラインの `key.subkey=value` で値を上書きできる（例 `megatron.train-iters=100`）。
-`base:` に別のファイルを書くと、そのファイルを読んでから上書きする。
+`--config` に渡す YAML の書き方は [docs/config.md](docs/config.md) にある。
 
 ## 構成
 
@@ -47,6 +38,7 @@ apptainer/                  コンテナの起動スクリプトと venv の構�
 megatron_speech/
   training/                 学習エントリポイント、設定ファイルの読み込み、recipe
 configs/                    設定ファイルの例
+docs/                       文書
 ```
 
 ## 上流の更新
