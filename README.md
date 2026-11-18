@@ -43,5 +43,4 @@ docs/                       文書
 
 ## 上流の更新
 
-Megatron-LM の固定コミットは月に 1 回程度まとめて進める。進めるときは `git -C third_party/Megatron-LM checkout <commit>`
-のあと、テストを流して損失が一致することを確かめてからコミットする。
+Megatron-LM の固定コミットは月に 1 回程度まとめて進める。進めるときは `git -C third_party/Megatron-LM checkout <commit>` のあと、テストを流して損失が一致することを確かめてからコミットする。
