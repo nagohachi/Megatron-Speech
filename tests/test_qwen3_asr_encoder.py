@@ -1,6 +1,5 @@
 import logging
 import re
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from itertools import pairwise
 
@@ -42,77 +41,54 @@ ENCODER_CONFIG = Qwen3ASREncoderConfig(
 )
 
 
-@dataclass
-class WeightPair:
-    """One of our parameters, the reference parameters it is made of, and its TP split dim."""
-
-    ours: torch.nn.Parameter
-    references: list[torch.nn.Parameter]
-    combine: Callable[[list[torch.Tensor]], torch.Tensor]
-    split_dim: int | None
-
-
-def take_first(tensors: list[torch.Tensor]) -> torch.Tensor:
-    """The only tensor of a one-to-one weight pair."""
-    return tensors[0]
-
-
-def interleave_qkv(tensors: list[torch.Tensor]) -> torch.Tensor:
+def interleave_qkv(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
     """Concatenate q, k and v head by head, as Megatron's fused ``linear_qkv`` stores them."""
-    heads = [t.reshape(ENCODER_CONFIG.num_attention_heads, -1, *t.shape[1:]) for t in tensors]
-    return torch.cat(heads, dim=1).reshape(-1, *tensors[0].shape[1:])
-
-
-def list_weight_pairs(encoder: Qwen3ASREncoder, reference: HFEncoder) -> list[WeightPair]:
-    """Pair every parameter of ``encoder`` with the reference parameters it is made of.
-
-    Both sides are looked up by name in ``named_parameters()``. The names on our side come
-    from Megatron's layers (``transformer.layers.0.self_attention.linear_qkv.weight``); only
-    they tell which fused weight holds which Hugging Face weights.
-    """
-    ours = dict(encoder.named_parameters())
-    theirs = dict(reference.named_parameters())
-
-    def pair(our_name: str, their_names: list[str], split_dim: int | None) -> WeightPair:
-        combine = interleave_qkv if len(their_names) == 3 else take_first
-        return WeightPair(ours[our_name], [theirs[n] for n in their_names], combine, split_dim)
-
-    pairs = [pair(f"{name}.weight", [f"{name}.weight"], None) for name in CONVOLUTIONS]
-    pairs += [pair(f"{name}.bias", [f"{name}.bias"], None) for name in CONVOLUTIONS[:3]]
-    for index in range(ENCODER_CONFIG.num_layers):
-        attention = f"transformer.layers.{index}.self_attention."
-        mlp = f"transformer.layers.{index}.mlp."
-        hf = f"layers.{index}."
-        for suffix in ("weight", "bias"):
-            qkv = [f"{hf}self_attn.{p}_proj.{suffix}" for p in "qkv"]
-            pairs += [
-                pair(f"{attention}linear_qkv.{suffix}", qkv, 0),
-                pair(
-                    f"{attention}linear_qkv.layer_norm_{suffix}",
-                    [f"{hf}self_attn_layer_norm.{suffix}"],
-                    None,
-                ),
-                pair(
-                    f"{attention}linear_proj.{suffix}",
-                    [f"{hf}self_attn.out_proj.{suffix}"],
-                    1 if suffix == "weight" else None,
-                ),
-                pair(f"{mlp}linear_fc1.{suffix}", [f"{hf}fc1.{suffix}"], 0),
-                pair(
-                    f"{mlp}linear_fc1.layer_norm_{suffix}", [f"{hf}final_layer_norm.{suffix}"], None
-                ),
-                pair(
-                    f"{mlp}linear_fc2.{suffix}",
-                    [f"{hf}fc2.{suffix}"],
-                    1 if suffix == "weight" else None,
-                ),
-            ]
-    pairs += [
-        pair(f"transformer.final_layernorm.{s}", [f"ln_post.{s}"], None) for s in ("weight", "bias")
+    heads = [
+        t.reshape(ENCODER_CONFIG.num_attention_heads, -1, *t.shape[1:]) for t in (query, key, value)
     ]
-    assert len(pairs) == len(ours)
-    assert {id(p.ours) for p in pairs} == {id(p) for p in ours.values()}, "unpaired parameters"
-    return pairs
+    return torch.cat(heads, dim=1).reshape(-1, *query.shape[1:])
+
+
+def map_hf_tensors(hf_tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Hugging Face weights or gradients under the encoder's parameter names, before splitting.
+
+    The encoder's names come from Megatron's layers (``transformer.layers.0.self_attention.
+    linear_qkv.weight``); only they tell which fused weight holds which Hugging Face weights.
+    """
+    mapped = {f"{name}.weight": hf_tensors[f"{name}.weight"] for name in CONVOLUTIONS}
+    mapped |= {f"{name}.bias": hf_tensors[f"{name}.bias"] for name in CONVOLUTIONS[:3]}
+    for index in range(ENCODER_CONFIG.num_layers):
+        layer, hf_layer = f"transformer.layers.{index}.", f"layers.{index}."
+        for suffix in ("weight", "bias"):
+            qkv = [hf_tensors[f"{hf_layer}self_attn.{p}_proj.{suffix}"] for p in "qkv"]
+            mapped |= {
+                f"{layer}self_attention.linear_qkv.{suffix}": interleave_qkv(*qkv),
+                f"{layer}self_attention.linear_qkv.layer_norm_{suffix}": hf_tensors[
+                    f"{hf_layer}self_attn_layer_norm.{suffix}"
+                ],
+                f"{layer}self_attention.linear_proj.{suffix}": hf_tensors[
+                    f"{hf_layer}self_attn.out_proj.{suffix}"
+                ],
+                f"{layer}mlp.linear_fc1.{suffix}": hf_tensors[f"{hf_layer}fc1.{suffix}"],
+                f"{layer}mlp.linear_fc1.layer_norm_{suffix}": hf_tensors[
+                    f"{hf_layer}final_layer_norm.{suffix}"
+                ],
+                f"{layer}mlp.linear_fc2.{suffix}": hf_tensors[f"{hf_layer}fc2.{suffix}"],
+            }
+    for suffix in ("weight", "bias"):
+        mapped[f"transformer.final_layernorm.{suffix}"] = hf_tensors[f"ln_post.{suffix}"]
+    return mapped
+
+
+def get_split_dim(name: str) -> int | None:
+    """Dim of the encoder parameter ``name`` that tensor parallelism splits, if any."""
+    if name.endswith(
+        ("linear_qkv.weight", "linear_qkv.bias", "linear_fc1.weight", "linear_fc1.bias")
+    ):
+        return 0  # column parallel: output features
+    if name.endswith(("linear_proj.weight", "linear_fc2.weight")):
+        return 1  # row parallel: input features
+    return None
 
 
 @pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
@@ -159,11 +135,14 @@ def build_encoder(
     )
     pg_collection = ProcessGroupCollection.use_mpu_process_groups()
     encoder = Qwen3ASREncoder(ENCODER_CONFIG, llm_config, pg_collection).cuda()
+    encoder_parameters = dict(encoder.named_parameters())
+    hf_weights = map_hf_tensors({name: p.detach() for name, p in reference.named_parameters()})
+    assert hf_weights.keys() == encoder_parameters.keys()
     with torch.no_grad():
-        for pair in list_weight_pairs(encoder, reference):
-            value = take_shard(pair.combine(pair.references), pair.split_dim)
-            assert pair.ours.shape == value.shape
-            pair.ours.copy_(value)
+        for name, weight in hf_weights.items():
+            shard = take_shard(weight, get_split_dim(name))
+            assert encoder_parameters[name].shape == shard.shape
+            encoder_parameters[name].copy_(shard)
     return encoder
 
 
@@ -308,12 +287,10 @@ def test_gradients_match_hf(
     expected.backward(grad_output)
     actual.backward(grad_output.to(dtype))
 
+    hf_gradients = map_hf_tensors({name: p.grad for name, p in reference.named_parameters()})
     errors = [
-        calc_relative_error(
-            pair.ours.grad,
-            take_shard(pair.combine([p.grad for p in pair.references]), pair.split_dim),
-        )
-        for pair in list_weight_pairs(encoder, reference)
+        calc_relative_error(param.grad, take_shard(hf_gradients[name], get_split_dim(name)))
+        for name, param in encoder.named_parameters()
     ]
     logger.info("%s: weight gradient max relative error %.2e", dtype, max(errors))
     assert max(errors) < TOLERANCES[dtype]

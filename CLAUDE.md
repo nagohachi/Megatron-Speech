@@ -42,6 +42,7 @@ The maintainer reviews design as well as rules. For new and changed code, the re
 
 - Is anything fixed in code that a config should set? Reusable code (components, data processing, losses) takes its choices, such as the number of layers, the sizes, the activation and the dtype, from its config. A limit such as "two layers only" or "GELU only" needs a reason written next to it. (PR #3 asked this of the MLP projector.)
 - Does every function, class and module earn its place? Flag pass-through wrappers, helpers that one function in the same file calls, and modules that only collect other functions. (PR #2 removed `compat.py` and `RunConfigLoader.load_file` for this reason.)
+- Is there indirection that the code does not need, such as a function that only returns its argument or an element of it (`take_first`), or a dataclass field that holds a function chosen per case? Write the expression where it is used. (PR #9 called this slop.)
 - Is every dependency on Megatron-LM, Transformer Engine or Hugging Face needed, and does it go through a public API? When the reason for a dependency is not clear from the code, ask for it. (PR #3 asked why components build a Megatron `TransformerConfig`.)
 - Does an invalid config fail when the object is built, with a message that names the setting? For example, sizes that tensor parallelism cannot split.
 
