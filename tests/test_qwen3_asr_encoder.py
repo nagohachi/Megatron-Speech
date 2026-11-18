@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from itertools import pairwise
@@ -315,48 +316,83 @@ def test_gradients_match_hf(
     assert max(errors) < TOLERANCES[dtype]
 
 
+@dataclass
+class InvalidConfig:
+    """Changes to ENCODER_CONFIG and the error message they cause."""
+
+    changes: dict[str, int | str]
+    message: str
+
+
 @pytest.mark.parametrize(
-    ("field", "value"),
+    "invalid",
     [
-        ("num_attention_heads", 3),
-        ("n_window", 0),
-        ("n_window_infer", 150),
-        ("n_window_infer", 0),
-        ("activation", "swish"),
-        ("hidden_size", 65),
-        ("hidden_size", 2),
-    ],
-    ids=[
-        "hidden-not-multiple-of-heads",
-        "no-chunk-frames",
-        "window-not-multiple-of-chunk",
-        "no-window",
-        "unknown-activation",
-        "odd-hidden-size",
-        "hidden-size-two",
+        pytest.param(
+            InvalidConfig({"num_attention_heads": 3}, "hidden_size=64 is not a multiple"),
+            id="hidden-not-multiple-of-heads",
+        ),
+        pytest.param(
+            InvalidConfig({"n_window": 0}, "n_window must be at least 1"), id="no-chunk-frames"
+        ),
+        pytest.param(
+            InvalidConfig({"n_window_infer": 150}, "n_window_infer=150 must be a positive"),
+            id="window-not-multiple-of-chunk",
+        ),
+        pytest.param(
+            InvalidConfig({"n_window_infer": 0}, "n_window_infer=0 must be a positive"),
+            id="no-window",
+        ),
+        pytest.param(
+            InvalidConfig({"activation": "swish"}, "activation='swish' is not one of"),
+            id="unknown-activation",
+        ),
+        pytest.param(
+            InvalidConfig({"hidden_size": 65}, "hidden_size must be an even number"),
+            id="odd-hidden-size",
+        ),
+        pytest.param(
+            InvalidConfig({"hidden_size": 2}, "hidden_size must be an even number"),
+            id="hidden-size-two",
+        ),
     ],
 )
-def test_config_rejects_invalid_values(field: str, value: int | str) -> None:
+def test_config_rejects_invalid_values(invalid: InvalidConfig) -> None:
     """Values that the encoder or its inputs cannot use raise ValueError at construction."""
-    with pytest.raises(ValueError, match=field):
-        replace(ENCODER_CONFIG, **{field: value})
+    with pytest.raises(ValueError, match=re.escape(invalid.message)):
+        replace(ENCODER_CONFIG, **invalid.changes)
+
+
+@dataclass
+class UnsplittableConfig:
+    """A TP size, changes to ENCODER_CONFIG that it cannot split, and the error message."""
+
+    tp_size: int
+    changes: dict[str, int]
+    message: str
 
 
 @pytest.mark.parametrize(
-    ("tp_size", "field", "value"),
-    [(3, "num_attention_heads", 4), (2, "ffn_hidden_size", 129)],
-    ids=["heads", "ffn"],
+    "unsplittable",
+    [
+        pytest.param(
+            UnsplittableConfig(3, {}, "num_attention_heads=4 cannot be split"), id="heads"
+        ),
+        pytest.param(
+            UnsplittableConfig(2, {"ffn_hidden_size": 129}, "ffn_hidden_size=129 cannot be split"),
+            id="ffn",
+        ),
+    ],
 )
-def test_rejects_sizes_not_divisible_by_tp(tp_size: int, field: str, value: int) -> None:
+def test_rejects_sizes_not_divisible_by_tp(unsplittable: UnsplittableConfig) -> None:
     """Heads and MLP features that do not split evenly over the TP ranks raise ValueError."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
-        num_attention_heads=tp_size,
-        tensor_model_parallel_size=tp_size,
+        num_attention_heads=unsplittable.tp_size,
+        tensor_model_parallel_size=unsplittable.tp_size,
     )
-    with pytest.raises(ValueError, match=f"{field}={value} cannot be split"):
-        Qwen3ASREncoder(replace(ENCODER_CONFIG, **{field: value}), llm_config)
+    with pytest.raises(ValueError, match=re.escape(unsplittable.message)):
+        Qwen3ASREncoder(replace(ENCODER_CONFIG, **unsplittable.changes), llm_config)
 
 
 @pytest.mark.gpu
