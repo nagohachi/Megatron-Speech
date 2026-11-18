@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 import torch
@@ -17,29 +17,14 @@ logger = logging.getLogger(__name__)
 TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 5e-2}
 UTTERANCE_LENGTHS = [7, 4, 1]
 CU_SEQLENS = [0, 7, 11, 12]
+BASE_CONFIG = QFormerProjectorConfig(
+    input_size=48, output_size=80, hidden_size=64, num_attention_heads=4, ffn_hidden_size=128
+)
 # Several windows per utterance, and the whole utterance as one window.
 PROJECTOR_CONFIGS = [
-    QFormerProjectorConfig(
-        input_size=48,
-        output_size=80,
-        hidden_size=64,
-        num_layers=2,
-        num_attention_heads=4,
-        ffn_hidden_size=128,
-        cross_attention_frequency=1,
-        num_queries=2,
-        window_size=4,
-    ),
-    QFormerProjectorConfig(
-        input_size=48,
-        output_size=80,
-        hidden_size=64,
-        num_layers=3,
-        num_attention_heads=4,
-        ffn_hidden_size=128,
-        cross_attention_frequency=2,
-        num_queries=3,
-        window_size=None,
+    replace(BASE_CONFIG, num_layers=2, cross_attention_frequency=1, num_queries=2, window_size=4),
+    replace(
+        BASE_CONFIG, num_layers=3, cross_attention_frequency=2, num_queries=3, window_size=None
     ),
 ]
 
@@ -269,10 +254,7 @@ def test_accepts_no_frames(tensor_parallel_size: int, cu_seqlens: list[int]) -> 
         num_attention_heads=tensor_parallel_size,
         tensor_model_parallel_size=tensor_parallel_size,
     )
-    projector_config = QFormerProjectorConfig(
-        input_size=48, output_size=80, hidden_size=64, num_attention_heads=4, ffn_hidden_size=128
-    )
-    projector = QFormerProjector(projector_config, llm_config).cuda()
+    projector = QFormerProjector(BASE_CONFIG, llm_config).cuda()
     output = projector(
         torch.zeros(0, 48, device="cuda"),
         torch.tensor(cu_seqlens, dtype=torch.int32, device="cuda"),
@@ -290,12 +272,10 @@ def test_rejects_heads_not_divisible_by_tp(tensor_parallel_size: int) -> None:
         num_attention_heads=tensor_parallel_size,
         tensor_model_parallel_size=tensor_parallel_size,
     )
-    projector_config = QFormerProjectorConfig(
-        input_size=48,
-        output_size=80,
+    projector_config = replace(
+        BASE_CONFIG,
         hidden_size=tensor_parallel_size * 64 + 64,
         num_attention_heads=tensor_parallel_size + 1,
-        ffn_hidden_size=128,
     )
     with pytest.raises(ValueError, match="num_attention_heads"):
         QFormerProjector(projector_config, llm_config)
@@ -307,9 +287,6 @@ def test_rejects_heads_not_divisible_by_tp(tensor_parallel_size: int) -> None:
 def test_rejects_counts_below_one(field: str) -> None:
     """Layer, query, cross-attention and window counts below one raise ValueError."""
     llm_config = TransformerConfig(num_layers=1, hidden_size=64, num_attention_heads=1)
-    projector_config = QFormerProjectorConfig(
-        input_size=48, output_size=80, hidden_size=64, num_attention_heads=4, ffn_hidden_size=128
-    )
-    setattr(projector_config, field, 0)
+    projector_config = replace(BASE_CONFIG, **{field: 0})
     with pytest.raises(ValueError, match=field):
         QFormerProjector(projector_config, llm_config)
