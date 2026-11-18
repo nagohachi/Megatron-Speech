@@ -14,17 +14,22 @@ logger = logging.getLogger(__name__)
 
 # Largest relative error allowed against the fp32 reference, by parameter dtype.
 TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 2e-2}
-# (num_layers, activation)
-SHAPES = [(1, "gelu"), (2, "gelu"), (3, "silu")]
-
-
-@pytest.fixture(name="projector_config", params=SHAPES, ids=str)
-def build_projector_config(request: pytest.FixtureRequest) -> MLPProjectorConfig:
-    """Projectors of one to three layers."""
-    num_layers, activation = request.param
-    return MLPProjectorConfig(
+PROJECTOR_CONFIGS = [
+    MLPProjectorConfig(
         input_size=48, output_size=64, num_layers=num_layers, hidden_size=96, activation=activation
     )
+    for num_layers, activation in [(1, "gelu"), (2, "gelu"), (3, "silu")]
+]
+
+
+@pytest.fixture(
+    name="projector_config",
+    params=PROJECTOR_CONFIGS,
+    ids=lambda config: f"{config.num_layers}layers-{config.activation}",
+)
+def build_projector_config(request: pytest.FixtureRequest) -> MLPProjectorConfig:
+    """Projector config with one to three layers."""
+    return request.param
 
 
 @pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
