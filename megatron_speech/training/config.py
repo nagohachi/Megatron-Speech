@@ -13,12 +13,14 @@ Overrides are ``key.subkey=value`` tokens; values are parsed as YAML scalars
 
 import copy
 from pathlib import Path
-from typing import Any
 
 import yaml
 
+type ConfigValue = str | int | float | bool | None | list[ConfigValue] | dict[str, ConfigValue]
+type ConfigDict = dict[str, ConfigValue]
 
-def merge_dicts(base: dict, override: dict) -> dict:
+
+def merge_dicts(base: ConfigDict, override: ConfigDict) -> ConfigDict:
     """Recursively merge ``override`` into a copy of ``base``."""
     out = copy.deepcopy(base)
     for key, value in override.items():
@@ -29,7 +31,7 @@ def merge_dicts(base: dict, override: dict) -> dict:
     return out
 
 
-def load_config_file(path: str | Path) -> dict:
+def load_config_file(path: str | Path) -> ConfigDict:
     path = Path(path)
     with open(path) as f:
         cfg = yaml.safe_load(f) or {}
@@ -40,7 +42,7 @@ def load_config_file(path: str | Path) -> dict:
     return cfg
 
 
-def apply_overrides(cfg: dict, overrides: list[str]) -> dict:
+def apply_overrides(cfg: ConfigDict, overrides: list[str]) -> ConfigDict:
     cfg = copy.deepcopy(cfg)
     for token in overrides:
         if "=" not in token:
@@ -57,7 +59,7 @@ def apply_overrides(cfg: dict, overrides: list[str]) -> dict:
     return cfg
 
 
-def load_config(path: str | Path, overrides: list[str] | None = None) -> dict[str, Any]:
+def load_config(path: str | Path, overrides: list[str] | None = None) -> ConfigDict:
     cfg = load_config_file(path)
     cfg = apply_overrides(cfg, overrides or [])
     cfg.setdefault("model", {})

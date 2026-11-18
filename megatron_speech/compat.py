@@ -9,17 +9,20 @@ Pinned upstream: third_party/Megatron-LM (see ``git submodule status``).
 """
 
 import sys
+from argparse import ArgumentParser
 from contextlib import contextmanager
-from typing import Any, Callable, Iterable
+from typing import Callable, Iterable
 
 import torch
+
+from megatron_speech.training.config import ConfigDict
 
 # --------------------------------------------------------------------------------------------
 # Argument parsing and run configuration
 # --------------------------------------------------------------------------------------------
 
 
-def convert_dict_to_argv(arg_dict: dict[str, Any]) -> list[str]:
+def convert_dict_to_argv(arg_dict: ConfigDict) -> list[str]:
     """Convert ``{"micro-batch-size": 1, "bf16": True}`` into Megatron CLI tokens.
 
     Keys may use ``-`` or ``_``. ``True`` becomes a bare flag, ``False``/``None`` are dropped
@@ -52,9 +55,9 @@ def _patched_argv(argv: list[str]):
 
 
 def parse_megatron_args(
-    arg_dict: dict[str, Any],
-    extra_args_provider: Callable | None = None,
-    args_defaults: dict[str, Any] | None = None,
+    arg_dict: ConfigDict,
+    extra_args_provider: Callable[[ArgumentParser], ArgumentParser] | None = None,
+    args_defaults: ConfigDict | None = None,
 ):
     """Parse, validate and register Megatron's global ``args`` from a dict.
 

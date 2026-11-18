@@ -5,19 +5,26 @@
 * ``gpt``         upstream Megatron GPT model and datasets (sanity check of the entry point)
 """
 
-from typing import Any, Callable
+from typing import Callable, TypedDict
 
 from megatron_speech import compat
+from megatron_speech.training.config import ConfigDict
+
+
+class PretrainKwargs(TypedDict, total=False):
+    """Optional keyword arguments of ``megatron.training.pretrain`` that recipes set."""
+
+    get_embedding_ranks: Callable[[list[int]], list[int]]
 
 
 class Recipe:
     """Base recipe. Subclasses override the hooks that differ between model families."""
 
-    def __init__(self, cfg: dict[str, Any]):
+    def __init__(self, cfg: ConfigDict):
         self.cfg = cfg
 
     # -- hooks -------------------------------------------------------------------------------
-    def megatron_arg_dict(self) -> dict[str, Any]:
+    def megatron_arg_dict(self) -> ConfigDict:
         """Megatron CLI arguments; recipes add the ones derived from the model."""
         return dict(self.cfg["megatron"])
 
@@ -36,7 +43,7 @@ class Recipe:
     def forward_step(self):
         raise NotImplementedError
 
-    def pretrain_kwargs(self) -> dict[str, Any]:
+    def pretrain_kwargs(self) -> PretrainKwargs:
         return {}
 
     # -- driver ------------------------------------------------------------------------------
@@ -66,7 +73,7 @@ class GPTRecipe(Recipe):
     def forward_step(self):
         return compat.get_upstream_gpt_step_functions()[0]
 
-    def pretrain_kwargs(self):
+    def pretrain_kwargs(self) -> PretrainKwargs:
         return {"get_embedding_ranks": compat.get_upstream_gpt_step_functions()[2]}
 
 
