@@ -49,3 +49,4 @@ The maintainer reviews design as well as rules. For new and changed code, the re
 - Tests include the edge inputs that training produces, such as a batch without audio tokens.
 - Tests log the measured errors with `logging`, and the pull request description reports them.
 - Tests reach the module under test through its own attributes, not through attributes inside Megatron-LM classes.
+- A test function holds only the checks of one property, such as the outputs or the gradients. Setup that several tests share, such as building the models, copying the reference weights and making the inputs, goes into fixtures. (PR #5 split a 120-line test this way.)
