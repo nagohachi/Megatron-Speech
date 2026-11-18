@@ -88,12 +88,6 @@ def build_pretrain_config(args, model_cfg, data_cfg=None):
     return cfg
 
 
-def get_run_config():
-    from megatron.training.global_vars import get_run_config as _get_run_config
-
-    return _get_run_config()
-
-
 def run_pretrain(cfg, datasets_provider, forward_step_func, **kwargs):
     """Run Megatron's training loop (``megatron.training.pretrain``)."""
     from megatron.core.enums import ModelType
