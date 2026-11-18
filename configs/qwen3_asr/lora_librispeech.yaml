@@ -1,0 +1,16 @@
+# LoRA fine-tuning of Qwen3-ASR-1.7B on LibriSpeech train-clean-100: encoder frozen,
+# projector trained in full, LoRA on every linear layer of the LLM.
+base: finetune_librispeech.yaml
+
+model:
+  peft:
+    encoder: {mode: frozen}
+    projector: {mode: full}
+    llm: {mode: lora, rank: 16, alpha: 32, dropout: 0.0}
+
+megatron:
+  lr: 1.0e-4
+  min-lr: 1.0e-5
+  save: outputs/qwen3_asr_librispeech_lora
+  load: outputs/qwen3_asr_librispeech_lora
+  tensorboard-dir: outputs/qwen3_asr_librispeech_lora/tensorboard

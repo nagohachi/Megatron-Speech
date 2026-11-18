@@ -1,0 +1,51 @@
+# Full-parameter fine-tuning of Qwen3-ASR-1.7B on LibriSpeech train-clean-100 (one node).
+#
+#   CUDA_VISIBLE_DEVICES=0,1,2,3 apptainer/run.sh torchrun --nproc-per-node 4 \
+#       -m megatron_speech.training.train --config configs/qwen3_asr/finetune_librispeech.yaml
+#
+# Data: scripts/prepare_librispeech.py. Each micro-batch packs utterances into one row of at
+# most data.max_tokens_per_microbatch LLM tokens; global-batch-size counts micro-batches
+# (global-batch-size / data-parallel size micro-batches per rank and step).
+model:
+  type: speech_llm
+  bridge: qwen3_asr
+  hf_init: Qwen/Qwen3-ASR-1.7B-hf
+  peft:
+    encoder: {mode: full}
+    projector: {mode: full}
+    llm: {mode: full}
+
+data:
+  train: {shar_dirs: [data/librispeech/shar/train-clean-100]}
+  valid: {shar_dirs: [data/librispeech/shar/dev-clean]}
+  max_tokens_per_microbatch: 4096
+  num_buckets: 30
+  num_workers: 4
+  default_language: en
+  # LibriSpeech transcripts are upper case; Qwen3-ASR writes mixed case. Lower case keeps the
+  # targets closer to the model's usual tokens.
+  text_transform: lower
+
+megatron:
+  tensor-model-parallel-size: 1
+  global-batch-size: 16
+  train-iters: 2000
+  lr: 1.0e-5
+  min-lr: 1.0e-6
+  lr-decay-style: cosine
+  lr-warmup-iters: 100
+  weight-decay: 0.01
+  clip-grad: 1.0
+  bf16: true
+  use-distributed-optimizer: true
+  overlap-grad-reduce: true
+  overlap-param-gather: true
+  seed: 1234
+  log-interval: 10
+  log-throughput: true
+  eval-interval: 200
+  eval-iters: 10
+  save: outputs/qwen3_asr_librispeech_full
+  load: outputs/qwen3_asr_librispeech_full
+  save-interval: 1000
+  tensorboard-dir: outputs/qwen3_asr_librispeech_full/tensorboard

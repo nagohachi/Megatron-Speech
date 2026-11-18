@@ -3,6 +3,7 @@
 ``model.type`` in the run config selects the recipe:
 
 * ``gpt``         upstream Megatron GPT model and datasets (sanity check of the entry point)
+* ``speech_llm``  encoder + projector + LLM built on MIMO (megatron_speech.models.speech_llm)
 """
 
 from __future__ import annotations
@@ -75,4 +76,8 @@ class GPTRecipe(Recipe):
 def get_recipe(model_type: str) -> type[Recipe]:
     if model_type == "gpt":
         return GPTRecipe
-    raise ValueError(f"unknown model.type {model_type!r} (expected 'gpt')")
+    if model_type == "speech_llm":
+        from megatron_speech.training.speech_llm_recipe import SpeechLLMRecipe
+
+        return SpeechLLMRecipe
+    raise ValueError(f"unknown model.type {model_type!r} (expected 'gpt' or 'speech_llm')")

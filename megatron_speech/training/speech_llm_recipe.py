@@ -80,3 +80,16 @@ class SpeechLLMRecipe(Recipe):
 
     def build_model_config(self, args):
         return build_speech_llm_model_config(args, self.model_section)
+
+    def datasets_provider(self):
+        from megatron_speech.data.provider import build_datasets_provider
+
+        return build_datasets_provider(self.cfg, self.model_section)
+
+    def forward_step(self):
+        from megatron_speech.training.speech_llm_step import forward_step
+
+        return forward_step
+
+    def pretrain_kwargs(self):
+        return {"build_tokenizer": False}
