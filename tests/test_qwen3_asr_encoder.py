@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from itertools import pairwise
 
 import pytest
 import torch
@@ -186,43 +187,74 @@ def run_reference(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tenso
     ).last_hidden_state
 
 
-def test_windows_match_hf() -> None:
-    """The attention windows equal the ones Hugging Face computes for the same utterances."""
-    inputs = Qwen3ASREncoderInputs.build(
-        [torch.zeros(1, n) for n in UTTERANCE_FRAMES], ENCODER_CONFIG
-    )
+@pytest.fixture(name="cpu_inputs")
+def build_cpu_inputs(mels: list[torch.Tensor]) -> Qwen3ASREncoderInputs:
+    """Encoder inputs of the test utterances, on the CPU as the data loader makes them."""
+    return Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG)
+
+
+@pytest.fixture(name="inputs")
+def copy_inputs_to_gpu(cpu_inputs: Qwen3ASREncoderInputs) -> Qwen3ASREncoderInputs:
+    """Encoder inputs of the test utterances on the GPU."""
+    return cpu_inputs.to("cuda")
+
+
+@pytest.fixture(name="hf_window_bounds")
+def calc_hf_window_bounds() -> list[int]:
+    """Cumulative token counts of the attention windows that Hugging Face computes."""
     chunk_frames = ENCODER_CONFIG.chunk_frames
     chunk_lengths = [
         min(chunk_frames, n - start)
         for n in UTTERANCE_FRAMES
         for start in range(0, n, chunk_frames)
     ]
-    expected = get_audio_cu_seqlens(
+    return get_audio_cu_seqlens(
         torch.tensor(chunk_lengths),
         torch.tensor(UTTERANCE_FRAMES),
         ENCODER_CONFIG.n_window_infer,
         ENCODER_CONFIG.n_window,
-    )
-    assert inputs.cu_seqlens.tolist() == expected.tolist()
-    assert inputs.max_seqlen == int((expected[1:] - expected[:-1]).max())
-
-
-def test_token_counts_match_hf() -> None:
-    """Each utterance gives as many tokens as Hugging Face's length formula says."""
-    expected = _get_feat_extract_output_lengths(
-        torch.tensor(UTTERANCE_FRAMES), ENCODER_CONFIG.n_window
     ).tolist()
-    assert [ENCODER_CONFIG.calc_num_tokens(n) for n in UTTERANCE_FRAMES] == expected
-    inputs = Qwen3ASREncoderInputs.build(
-        [torch.zeros(1, n) for n in UTTERANCE_FRAMES], ENCODER_CONFIG
-    )
-    assert inputs.token_index.numel() == sum(expected)
 
 
-def test_chunks_hold_the_frames(mels: list[torch.Tensor]) -> None:
+@pytest.fixture(name="hf_token_counts")
+def calc_hf_token_counts() -> list[int]:
+    """Encoder tokens per utterance by Hugging Face's length formula."""
+    frames = torch.tensor(UTTERANCE_FRAMES)
+    return _get_feat_extract_output_lengths(frames, ENCODER_CONFIG.n_window).tolist()
+
+
+def test_window_bounds_match_hf(
+    cpu_inputs: Qwen3ASREncoderInputs, hf_window_bounds: list[int]
+) -> None:
+    """The attention windows start and end where Hugging Face's do."""
+    assert cpu_inputs.cu_seqlens.tolist() == hf_window_bounds
+
+
+def test_longest_window_matches_hf(
+    cpu_inputs: Qwen3ASREncoderInputs, hf_window_bounds: list[int]
+) -> None:
+    """max_seqlen is the longest of Hugging Face's windows."""
+    longest = max(end - start for start, end in pairwise(hf_window_bounds))
+    assert cpu_inputs.max_seqlen == longest
+
+
+def test_token_counts_match_hf(hf_token_counts: list[int]) -> None:
+    """calc_num_tokens agrees with Hugging Face's length formula for every utterance."""
+    assert [ENCODER_CONFIG.calc_num_tokens(n) for n in UTTERANCE_FRAMES] == hf_token_counts
+
+
+def test_token_index_selects_hf_token_count(
+    cpu_inputs: Qwen3ASREncoderInputs, hf_token_counts: list[int]
+) -> None:
+    """token_index keeps as many tokens as Hugging Face's encoder outputs."""
+    assert cpu_inputs.token_index.numel() == sum(hf_token_counts)
+
+
+def test_chunks_hold_the_frames(
+    cpu_inputs: Qwen3ASREncoderInputs, mels: list[torch.Tensor]
+) -> None:
     """The chunks hold every frame once, in order, and zeros after the last frame."""
-    inputs = Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG)
-    chunks = iter(inputs.input_features)
+    chunks = iter(cpu_inputs.input_features)
     for mel in mels:
         num_chunks = -(-mel.shape[1] // ENCODER_CONFIG.chunk_frames)
         frames = torch.cat([next(chunks) for _ in range(num_chunks)], dim=1)
@@ -241,15 +273,16 @@ def test_rejects_batch_without_frames(frames: list[int]) -> None:
 
 @pytest.mark.gpu
 def test_output_matches_hf(
-    encoder: Qwen3ASREncoder, reference: HFEncoder, mels: list[torch.Tensor], dtype: torch.dtype
+    encoder: Qwen3ASREncoder,
+    reference: HFEncoder,
+    mels: list[torch.Tensor],
+    inputs: Qwen3ASREncoderInputs,
+    dtype: torch.dtype,
 ) -> None:
     """The encoder output equals Hugging Face's for the same utterances."""
-    inputs = Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG).to("cuda")
     with torch.no_grad():
         expected = run_reference(reference, mels)
-        actual = encoder(
-            inputs.input_features, inputs.token_index, inputs.cu_seqlens, inputs.max_seqlen
-        )
+        actual = encoder(**vars(inputs))
     error = calc_relative_error(actual, expected)
     logger.info("%s: output max relative error %.2e", dtype, error)
     assert actual.shape == expected.shape
@@ -258,14 +291,15 @@ def test_output_matches_hf(
 
 @pytest.mark.gpu
 def test_gradients_match_hf(
-    encoder: Qwen3ASREncoder, reference: HFEncoder, mels: list[torch.Tensor], dtype: torch.dtype
+    encoder: Qwen3ASREncoder,
+    reference: HFEncoder,
+    mels: list[torch.Tensor],
+    inputs: Qwen3ASREncoderInputs,
+    dtype: torch.dtype,
 ) -> None:
     """Gradients of every weight equal the reference ones, combined and split as the weights."""
-    inputs = Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG).to("cuda")
     expected = run_reference(reference, mels)
-    actual = encoder(
-        inputs.input_features, inputs.token_index, inputs.cu_seqlens, inputs.max_seqlen
-    )
+    actual = encoder(**vars(inputs))
     grad_output = torch.randn_like(expected)
     expected.backward(grad_output)
     actual.backward(grad_output.to(dtype))
