@@ -129,12 +129,15 @@ class GPTRecipe(Recipe):
     """Upstream GPT model through the Megatron-Speech entry point."""
 
     def build_model_config(self, args: Namespace) -> ModelConfig:
+        """Build the upstream ``GPTModelConfig`` from Megatron's args."""
         return gpt_config_from_args(args)
 
     def build_data_config(self, args: Namespace) -> DataConfig | None:
+        """Build the upstream GPT data section (``--data-path``, ``--mock-data``, ...)."""
         return gpt_data_config_from_args(args)
 
     def datasets_provider(self) -> DatasetsProvider:
+        """Return the datasets provider of ``pretrain_gpt.py``."""
         import pretrain_gpt  # third_party/Megatron-LM is on sys.path via the venv .pth file
 
         provider = pretrain_gpt.train_valid_test_datasets_provider
@@ -142,11 +145,13 @@ class GPTRecipe(Recipe):
         return provider
 
     def forward_step(self) -> ForwardStep:
+        """Return the forward step of ``pretrain_gpt.py``."""
         import pretrain_gpt
 
         return pretrain_gpt.forward_step
 
     def pretrain_kwargs(self) -> PretrainKwargs:
+        """Pass ``get_embedding_ranks`` of ``pretrain_gpt.py``, as its ``__main__`` block does."""
         import pretrain_gpt
 
         return {"get_embedding_ranks": pretrain_gpt.get_embedding_ranks}
