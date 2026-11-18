@@ -2,7 +2,7 @@
 # Run a command inside the NGC PyTorch container with the repository venv active.
 #
 #   apptainer/run.sh python -m pytest tests
-#   CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh torchrun --nproc-per-node 2 \
+#   CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh python -m torch.distributed.run --nproc-per-node 2 \
 #       -m megatron_speech.training.train --config configs/qwen3_asr/finetune_librispeech.yaml
 #   apptainer/run.sh --no-venv bash apptainer/setup_venv.sh   # build .venv
 #

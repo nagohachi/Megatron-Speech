@@ -48,13 +48,6 @@ python -m pip install --constraint .venv/container-constraints.txt -e ".[dev,log
 SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 echo "$MLM" > "$SITE/megatron_lm.pth"
 
-# The container's /usr/local/bin/torchrun runs the system Python, which does not see the venv.
-cat > .venv/bin/torchrun <<'SH'
-#!/bin/bash
-exec python -m torch.distributed.run "$@"
-SH
-chmod +x .venv/bin/torchrun
-
 python - <<'PY'
 import torch, transformer_engine, transformers, lhotse
 import megatron.core, megatron.training

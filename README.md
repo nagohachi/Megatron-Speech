@@ -16,7 +16,7 @@ apptainer/run.sh --no-venv bash apptainer/setup_venv.sh
 コマンドはすべて `apptainer/run.sh` 経由で実行する。作業ディレクトリはリポジトリ直下になる。
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh torchrun --nproc-per-node 2 \
+CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh python -m torch.distributed.run --nproc-per-node 2 \
     -m megatron_speech.training.train --config configs/gpt/tiny_mock.yaml
 ```
 

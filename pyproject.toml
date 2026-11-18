@@ -27,5 +27,5 @@ include = ["megatron_speech*"]
 testpaths = ["tests"]
 markers = [
     "gpu: needs at least one CUDA device",
-    "multigpu: needs at least two CUDA devices (run with torchrun)",
+    "multigpu: needs at least two CUDA devices (run with python -m torch.distributed.run)",
 ]

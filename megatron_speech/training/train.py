@@ -1,6 +1,6 @@
 """Training entry point.
 
-    torchrun --nproc-per-node N -m megatron_speech.training.train \
+    python -m torch.distributed.run --nproc-per-node N -m megatron_speech.training.train \
         --config configs/qwen3_asr/finetune_librispeech.yaml [key.subkey=value ...]
 """
 
