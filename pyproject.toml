@@ -49,6 +49,7 @@ select = [
     "SIM",  # flake8-simplify
     "N",    # pep8-naming
     "ANN",  # flake8-annotations: every parameter and return value is annotated
+    "D101", "D102", "D103", "D105", "D107",  # pydocstyle: every class, function and method has a docstring
     "TID",  # flake8-tidy-imports: the banned APIs below
     "RUF",  # Ruff-specific rules
 ]

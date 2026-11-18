@@ -12,6 +12,7 @@ from megatron_speech.training.recipes import get_recipe
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Load the run config given by ``--config`` and run the recipe that ``model.type`` names."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )

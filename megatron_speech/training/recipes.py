@@ -158,6 +158,7 @@ class GPTRecipe(Recipe):
 
 
 def get_recipe(model_type: str) -> type[Recipe]:
+    """Return the recipe class that ``model.type`` names."""
     if model_type == "gpt":
         return GPTRecipe
     raise ValueError(f"unknown model.type {model_type!r} (expected 'gpt')")

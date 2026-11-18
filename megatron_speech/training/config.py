@@ -25,6 +25,7 @@ class RunConfigLoader:
 
     @classmethod
     def load(cls, path: Path, overrides: list[str] | None = None) -> ConfigDict:
+        """Read ``path`` on top of the file named by its ``base:`` key, then apply ``overrides``."""
         with open(path) as f:
             cfg = yaml.safe_load(f) or {}
         base = cfg.pop("base", None)
