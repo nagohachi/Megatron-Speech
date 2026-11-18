@@ -7,7 +7,8 @@
 
 import sys
 from argparse import ArgumentParser, Namespace
-from typing import Callable, TypedDict
+from collections.abc import Callable
+from typing import TypedDict
 
 import torch
 from megatron.core.enums import ModelType

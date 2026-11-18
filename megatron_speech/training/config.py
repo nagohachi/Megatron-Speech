@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-type ConfigValue = str | int | float | bool | None | list[ConfigValue] | dict[str, ConfigValue]
+type ConfigValue = str | int | float | bool | list[ConfigValue] | dict[str, ConfigValue] | None
 type ConfigDict = dict[str, ConfigValue]
 
 
