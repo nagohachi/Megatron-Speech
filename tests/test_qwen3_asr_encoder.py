@@ -323,6 +323,8 @@ def test_gradients_match_hf(
         ("n_window_infer", 150),
         ("n_window_infer", 0),
         ("activation", "swish"),
+        ("hidden_size", 65),
+        ("hidden_size", 2),
     ],
     ids=[
         "hidden-not-multiple-of-heads",
@@ -330,6 +332,8 @@ def test_gradients_match_hf(
         "window-not-multiple-of-chunk",
         "no-window",
         "unknown-activation",
+        "odd-hidden-size",
+        "hidden-size-two",
     ],
 )
 def test_config_rejects_invalid_values(field: str, value: int | str) -> None:

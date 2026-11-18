@@ -51,6 +51,12 @@ class Qwen3ASREncoderConfig:
                 f"n_window_infer={self.n_window_infer} must be a positive multiple of "
                 f"2 * n_window={self.chunk_frames}"
             )
+        # The position embedding puts hidden_size / 2 sines and cosines side by side and
+        # divides by hidden_size / 2 - 1.
+        if self.hidden_size < 4 or self.hidden_size % 2:
+            raise ValueError(
+                f"hidden_size must be an even number of at least 4, got {self.hidden_size}"
+            )
         if self.hidden_size % self.num_attention_heads:
             raise ValueError(
                 f"hidden_size={self.hidden_size} is not a multiple of "
