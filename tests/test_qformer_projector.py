@@ -17,9 +17,31 @@ logger = logging.getLogger(__name__)
 TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 5e-2}
 UTTERANCE_LENGTHS = [7, 4, 1]
 CU_SEQLENS = [0, 7, 11, 12]
-# (num_layers, cross_attention_frequency, num_queries, window_size)
-SHAPES = [(2, 1, 2, 4), (3, 2, 3, None)]
-SHAPE_LOG = "layers={0.num_layers} queries={0.num_queries} window={0.window_size}"
+# Several windows per utterance, and the whole utterance as one window.
+PROJECTOR_CONFIGS = [
+    QFormerProjectorConfig(
+        input_size=48,
+        output_size=80,
+        hidden_size=64,
+        num_layers=2,
+        num_attention_heads=4,
+        ffn_hidden_size=128,
+        cross_attention_frequency=1,
+        num_queries=2,
+        window_size=4,
+    ),
+    QFormerProjectorConfig(
+        input_size=48,
+        output_size=80,
+        hidden_size=64,
+        num_layers=3,
+        num_attention_heads=4,
+        ffn_hidden_size=128,
+        cross_attention_frequency=2,
+        num_queries=3,
+        window_size=None,
+    ),
+]
 
 
 @dataclass
@@ -31,21 +53,16 @@ class Reference:
     query_tokens: torch.nn.Parameter
 
 
-@pytest.fixture(name="projector_config", params=SHAPES, ids=str)
-def build_projector_config(request: pytest.FixtureRequest) -> QFormerProjectorConfig:
-    """Small Q-Former shapes: several windows per utterance, and one window per utterance."""
-    num_layers, cross_attention_frequency, num_queries, window_size = request.param
-    return QFormerProjectorConfig(
-        input_size=48,
-        output_size=80,
-        hidden_size=64,
-        num_layers=num_layers,
-        num_attention_heads=4,
-        ffn_hidden_size=128,
-        cross_attention_frequency=cross_attention_frequency,
-        num_queries=num_queries,
-        window_size=window_size,
-    )
+def describe_config(config: QFormerProjectorConfig) -> str:
+    """Short name of a config for test ids and logs, such as ``2layers-2queries-window4``."""
+    window = "whole-utterance" if config.window_size is None else f"window{config.window_size}"
+    return f"{config.num_layers}layers-{config.num_queries}queries-{window}"
+
+
+@pytest.fixture(name="projector_config", params=PROJECTOR_CONFIGS, ids=describe_config)
+def get_projector_config(request: pytest.FixtureRequest) -> QFormerProjectorConfig:
+    """One of PROJECTOR_CONFIGS."""
+    return request.param
 
 
 @pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
@@ -204,7 +221,7 @@ def test_output_matches_hf(
         actual = projector(frames.to(dtype), cu_seqlens)
     error = calc_relative_error(actual, expected)
     logger.info(
-        "%s %s: output max relative error %.2e", SHAPE_LOG.format(projector_config), dtype, error
+        "%s %s: output max relative error %.2e", describe_config(projector_config), dtype, error
     )
     assert actual.shape == expected.shape
     assert error < TOLERANCES[dtype]
@@ -236,14 +253,14 @@ def test_gradients_match_hf(
     }
     logger.info(
         "%s %s: gradient max relative error %s",
-        SHAPE_LOG.format(projector_config),
+        describe_config(projector_config),
         dtype,
         ", ".join(f"{name} {error:.2e}" for name, error in errors.items()),
     )
     assert max(errors.values()) < TOLERANCES[dtype], errors
 
 
-@pytest.mark.parametrize("cu_seqlens", [[0], [0, 0]])
+@pytest.mark.parametrize("cu_seqlens", [[0], [0, 0]], ids=["no-utterances", "empty-utterance"])
 def test_accepts_no_frames(tensor_parallel_size: int, cu_seqlens: list[int]) -> None:
     """No utterances, or one utterance without frames, give no output vectors."""
     llm_config = TransformerConfig(
