@@ -204,38 +204,60 @@ class QFormerProjector(MegatronModule):
     ) -> None:
         """Build the queries and layers with the tensor parallelism and precision of the LLM."""
         tp_size = llm_config.tensor_model_parallel_size
-        if pg_collection is not None and pg_collection.tp.size() != tp_size:
-            raise ValueError(
-                f"pg_collection.tp has {pg_collection.tp.size()} ranks, but "
-                f"llm_config.tensor_model_parallel_size is {tp_size}"
-            )
-        split_sizes = {
-            "num_attention_heads": projector_config.num_attention_heads,
-            "ffn_hidden_size": projector_config.ffn_hidden_size,
-            "output_size": projector_config.output_size,
-        }
-        for name, size in split_sizes.items():
-            if size % tp_size:
+
+        def check_config() -> None:
+            """Raise ValueError for a config that cannot be built on ``tp_size`` ranks."""
+            if pg_collection is not None and pg_collection.tp.size() != tp_size:
                 raise ValueError(
-                    f"{name}={size} cannot be split over {tp_size} tensor parallel ranks"
+                    f"pg_collection.tp has {pg_collection.tp.size()} ranks, but "
+                    f"llm_config.tensor_model_parallel_size is {tp_size}"
                 )
-        if projector_config.hidden_size % projector_config.num_attention_heads:
-            raise ValueError(
-                f"hidden_size={projector_config.hidden_size} is not a multiple of "
-                f"num_attention_heads={projector_config.num_attention_heads}"
+            split_sizes = {
+                "num_attention_heads": projector_config.num_attention_heads,
+                "ffn_hidden_size": projector_config.ffn_hidden_size,
+                "output_size": projector_config.output_size,
+            }
+            for name, size in split_sizes.items():
+                if size % tp_size:
+                    raise ValueError(
+                        f"{name}={size} cannot be split over {tp_size} tensor parallel ranks"
+                    )
+            if projector_config.hidden_size % projector_config.num_attention_heads:
+                raise ValueError(
+                    f"hidden_size={projector_config.hidden_size} is not a multiple of "
+                    f"num_attention_heads={projector_config.num_attention_heads}"
+                )
+            counts = {
+                "num_layers": projector_config.num_layers,
+                "num_queries": projector_config.num_queries,
+                "cross_attention_frequency": projector_config.cross_attention_frequency,
+                # None makes the whole utterance one window.
+                "window_size": 1
+                if projector_config.window_size is None
+                else projector_config.window_size,
+            }
+            for name, count in counts.items():
+                if count < 1:
+                    raise ValueError(f"{name} must be at least 1, got {count}")
+
+        def build_query_tokens() -> torch.nn.Parameter:
+            """Learned queries ``[num_queries, hidden_size]``, drawn from a normal distribution.
+
+            Hugging Face starts them from zeros, but equal queries get equal gradients and stay
+            equal; LAVIS's BLIP-2 draws them from a normal distribution, as done here.
+            """
+            query_tokens = torch.nn.Parameter(
+                torch.empty(
+                    projector_config.num_queries,
+                    projector_config.hidden_size,
+                    dtype=config.params_dtype,
+                )
             )
-        counts = {
-            "num_layers": projector_config.num_layers,
-            "num_queries": projector_config.num_queries,
-            "cross_attention_frequency": projector_config.cross_attention_frequency,
-            # None makes the whole utterance one window.
-            "window_size": 1
-            if projector_config.window_size is None
-            else projector_config.window_size,
-        }
-        for name, count in counts.items():
-            if count < 1:
-                raise ValueError(f"{name} must be at least 1, got {count}")
+            if config.perform_initialization:
+                config.init_method(query_tokens)
+            return query_tokens
+
+        check_config()
         config = build_component_transformer_config(
             llm_config,
             num_layers=projector_config.num_layers,
@@ -247,17 +269,7 @@ class QFormerProjector(MegatronModule):
         super().__init__(config=config)
         self.window_size = projector_config.window_size
         tp_group = pg_collection.tp if pg_collection is not None else None
-        self.query_tokens = torch.nn.Parameter(
-            torch.empty(
-                projector_config.num_queries,
-                projector_config.hidden_size,
-                dtype=config.params_dtype,
-            )
-        )
-        if config.perform_initialization:
-            # Hugging Face starts from zeros, but equal queries get equal gradients and stay
-            # equal; LAVIS's BLIP-2 draws them from a normal distribution, as done here.
-            config.init_method(self.query_tokens)
+        self.query_tokens = build_query_tokens()
         self.layernorm = torch.nn.LayerNorm(
             projector_config.hidden_size,
             eps=projector_config.layernorm_epsilon,
