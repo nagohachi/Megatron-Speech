@@ -20,7 +20,6 @@ CU_SEQLENS = [0, 7, 11, 12]
 BASE_CONFIG = QFormerProjectorConfig(
     input_size=48, output_size=80, hidden_size=64, num_attention_heads=4, ffn_hidden_size=128
 )
-# Several windows per utterance, and the whole utterance as one window.
 PROJECTOR_CONFIGS = [
     replace(BASE_CONFIG, num_layers=2, cross_attention_frequency=1, num_queries=2, window_size=4),
     replace(
@@ -46,7 +45,7 @@ def describe_config(config: QFormerProjectorConfig) -> str:
 
 @pytest.fixture(name="projector_config", params=PROJECTOR_CONFIGS, ids=describe_config)
 def get_projector_config(request: pytest.FixtureRequest) -> QFormerProjectorConfig:
-    """One of PROJECTOR_CONFIGS."""
+    """A config that cuts each utterance into several windows, or one that reads it whole."""
     return request.param
 
 
