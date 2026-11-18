@@ -30,10 +30,7 @@ include = ["megatron_speech*"]
 testpaths = ["tests"]
 log_cli = true
 log_cli_level = "INFO"
-markers = [
-    "gpu: needs at least one CUDA device",
-    "multigpu: needs at least two CUDA devices (run with python -m torch.distributed.run)",
-]
+markers = ["gpu: needs at least one CUDA device"]
 
 [tool.ruff]
 line-length = 100

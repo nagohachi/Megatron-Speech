@@ -19,6 +19,8 @@ def init_model_parallel() -> Iterator[int]:
 
     Tests receive the TP size as ``tensor_parallel_size``.
     """
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA device")
     if "MASTER_PORT" not in os.environ:  # one process started by pytest, not by torch.distributed
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
