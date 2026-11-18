@@ -24,11 +24,6 @@ CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh python -m torch.distributed.run --npro
 
 - apptainer がないサーバーでは singularity を使う
 - リポジトリと `HF_HOME` があるファイルシステムのマウント点を bind する（singularity は自動では bind しない）
-- `TRITON_LIBCUDA_PATH=/.singularity.d/libs`、`CUDA_DEVICE_MAX_CONNECTIONS=1` を設定する
-
-サーバー固有の設定は `apptainer/env.local.sh`（git 管理外）に書く。使える変数は
-`MEGATRON_SPEECH_SIF`（イメージ）、`MEGATRON_SPEECH_BIND`（追加の bind）、
-`MEGATRON_SPEECH_RUNTIME`（apptainer か singularity の実行ファイル）である。
 
 ## 設定ファイル
 
