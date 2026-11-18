@@ -1,4 +1,5 @@
 import logging
+from dataclasses import replace
 from itertools import pairwise
 
 import pytest
@@ -15,11 +16,11 @@ logger = logging.getLogger(__name__)
 
 # Largest relative error allowed against the fp32 reference, by parameter dtype.
 TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 2e-2}
+BASE_CONFIG = MLPProjectorConfig(input_size=48, output_size=64, hidden_size=96)
 PROJECTOR_CONFIGS = [
-    MLPProjectorConfig(
-        input_size=48, output_size=64, num_layers=num_layers, hidden_size=96, activation=activation
-    )
-    for num_layers, activation in [(1, "gelu"), (2, "gelu"), (3, "silu")]
+    replace(BASE_CONFIG, num_layers=1, activation="gelu"),
+    replace(BASE_CONFIG, num_layers=2, activation="gelu"),
+    replace(BASE_CONFIG, num_layers=3, activation="silu"),
 ]
 
 
@@ -171,8 +172,7 @@ def test_accepts_zero_tokens(tensor_parallel_size: int) -> None:
         num_attention_heads=tensor_parallel_size,
         tensor_model_parallel_size=tensor_parallel_size,
     )
-    projector_config = MLPProjectorConfig(input_size=48, output_size=64, hidden_size=96)
-    projector = MLPProjector(projector_config, llm_config).cuda()
+    projector = MLPProjector(BASE_CONFIG, llm_config).cuda()
     assert projector(torch.zeros(0, 48, device="cuda")).shape == (0, 64)
 
 
@@ -186,9 +186,7 @@ def test_rejects_features_not_divisible_by_tp(tensor_parallel_size: int) -> None
         num_attention_heads=tensor_parallel_size,
         tensor_model_parallel_size=tensor_parallel_size,
     )
-    projector_config = MLPProjectorConfig(
-        input_size=48, output_size=64, hidden_size=tensor_parallel_size * 48 + 1
-    )
+    projector_config = replace(BASE_CONFIG, hidden_size=tensor_parallel_size * 48 + 1)
     with pytest.raises(ValueError, match="cannot be split"):
         MLPProjector(projector_config, llm_config)
 
@@ -201,7 +199,6 @@ def test_rejects_pg_collection_of_another_tp_size(tensor_parallel_size: int) -> 
         num_attention_heads=tensor_parallel_size + 1,
         tensor_model_parallel_size=tensor_parallel_size + 1,
     )
-    projector_config = MLPProjectorConfig(input_size=48, output_size=64, hidden_size=96)
     pg_collection = ProcessGroupCollection.use_mpu_process_groups()
     with pytest.raises(ValueError, match=r"pg_collection\.tp has"):
-        MLPProjector(projector_config, llm_config, pg_collection)
+        MLPProjector(BASE_CONFIG, llm_config, pg_collection)
