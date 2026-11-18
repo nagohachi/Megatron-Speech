@@ -96,12 +96,6 @@ def run_pretrain(cfg, datasets_provider, forward_step_func, **kwargs):
     return pretrain(cfg, datasets_provider, ModelType.encoder_or_decoder, forward_step_func, **kwargs)
 
 
-def get_timers():
-    from megatron.training import get_timers as _get_timers
-
-    return _get_timers()
-
-
 # --------------------------------------------------------------------------------------------
 # GPT sanity recipe (upstream GPT model, datasets and forward step)
 # --------------------------------------------------------------------------------------------
