@@ -22,12 +22,10 @@ from megatron_speech.components.encoders.qwen3_asr import (
     Qwen3ASREncoderConfig,
     Qwen3ASREncoderInputs,
 )
-from tests.reference_comparison import calc_relative_error, take_shard
+from tests.reference_comparison import TOLERANCES, calc_relative_error, take_shard
 
 logger = logging.getLogger(__name__)
 
-# Largest relative error allowed against the fp32 reference, by parameter dtype.
-TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 5e-2}
 # Several chunks and windows, no frames, one chunk, a partial chunk and one frame.
 UTTERANCE_FRAMES = [250, 0, 100, 37, 1]
 # Names of the convolutions and the linear layer after them, the same on both sides.

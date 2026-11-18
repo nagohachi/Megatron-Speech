@@ -8,13 +8,11 @@ from megatron.core.transformer import TransformerConfig
 from transformers import Blip2QFormerConfig, Blip2QFormerModel
 
 from megatron_speech.components.projectors.qformer import QFormerProjector, QFormerProjectorConfig
-from tests.reference_comparison import calc_relative_error, take_shard
+from tests.reference_comparison import TOLERANCES, calc_relative_error, take_shard
 
 pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)
 
-# Largest relative error allowed against the fp32 reference, by parameter dtype.
-TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 5e-2}
 UTTERANCE_LENGTHS = [7, 4, 1]
 CU_SEQLENS = [0, 7, 11, 12]
 BASE_CONFIG = QFormerProjectorConfig(

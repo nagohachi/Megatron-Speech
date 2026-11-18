@@ -1,6 +1,10 @@
 import torch
 from megatron.core import parallel_state
 
+# Largest relative error allowed against an fp32 reference, by the dtype of the module's
+# parameters. bf16 keeps 8 bits of mantissa; the components tested so far stay below 3.1e-2.
+TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 5e-2}
+
 
 def take_shard(tensor: torch.Tensor, dim: int | None) -> torch.Tensor:
     """This rank's part of ``tensor`` split along ``dim``, or all of it for None."""

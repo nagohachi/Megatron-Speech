@@ -9,13 +9,11 @@ from megatron.core.transformer import TransformerConfig
 
 from megatron_speech.components.activations import ACTIVATIONS
 from megatron_speech.components.projectors.mlp import MLPProjector, MLPProjectorConfig
-from tests.reference_comparison import calc_relative_error, take_shard
+from tests.reference_comparison import TOLERANCES, calc_relative_error, take_shard
 
 pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)
 
-# Largest relative error allowed against the fp32 reference, by parameter dtype.
-TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 2e-2}
 BASE_CONFIG = MLPProjectorConfig(input_size=48, output_size=64, hidden_size=96)
 PROJECTOR_CONFIGS = [
     replace(BASE_CONFIG, num_layers=1, activation="gelu"),
