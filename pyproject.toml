@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "megatron-speech"
+version = "0.1.0"
+description = "Training speech language models on Megatron Core"
+requires-python = ">=3.12"
+# torch, transformer_engine and flash-attn come from the NGC PyTorch container
+# (apptainer/run.sh). Megatron-LM is put on sys.path by a .pth file that
+# apptainer/setup_venv.sh writes, so it is not listed here.
+dependencies = [
+    "transformers>=5.22",
+    "safetensors",
+    "lhotse>=1.33",
+    "soundfile",
+    "pyyaml",
+    "einops",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "peft", "datasets"]
+logging = ["wandb", "tensorboard"]
+
+[tool.setuptools.packages.find]
+include = ["megatron_speech*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gpu: needs at least one CUDA device",
+    "multigpu: needs at least two CUDA devices (run with torchrun)",
+]
