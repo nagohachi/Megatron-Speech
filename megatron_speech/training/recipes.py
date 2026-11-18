@@ -6,9 +6,10 @@
 """
 
 import sys
-from argparse import Namespace
+from argparse import ArgumentParser, Namespace
 from typing import Callable, TypedDict
 
+import torch
 from megatron.core.enums import ModelType
 from megatron.training import pretrain
 from megatron.training.argument_utils import (
@@ -17,9 +18,16 @@ from megatron.training.argument_utils import (
     pretrain_cfg_container_from_args,
 )
 from megatron.training.arguments import parse_and_validate_args
+from megatron.training.config import DataConfig, PretrainConfigContainer
 from megatron.training.global_vars import set_run_config
+from megatron.training.models.base import ModelConfig
+from torch.utils.data import Dataset
 
 from megatron_speech.training.config import ConfigDict
+
+type LossFunc = Callable[[torch.Tensor], tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]]
+type ForwardStep = Callable[..., tuple[torch.Tensor, LossFunc]]
+type DatasetsProvider = Callable[..., tuple[Dataset | None, Dataset | None, Dataset | None]]
 
 
 class PretrainKwargs(TypedDict, total=False):
@@ -31,7 +39,7 @@ class PretrainKwargs(TypedDict, total=False):
 class Recipe:
     """Base recipe. Subclasses override the hooks that differ between model families."""
 
-    def __init__(self, cfg: ConfigDict):
+    def __init__(self, cfg: ConfigDict) -> None:
         self.cfg = cfg
 
     # -- hooks -------------------------------------------------------------------------------
@@ -39,19 +47,19 @@ class Recipe:
         """Megatron CLI arguments; recipes add the ones derived from the model."""
         return dict(self.cfg["megatron"])
 
-    def extra_args_provider(self) -> Callable | None:
+    def extra_args_provider(self) -> Callable[[ArgumentParser], ArgumentParser] | None:
         return None
 
-    def build_model_config(self, args):
+    def build_model_config(self, args: Namespace) -> ModelConfig:
         raise NotImplementedError
 
-    def build_data_config(self, args):
+    def build_data_config(self, args: Namespace) -> DataConfig | None:
         return None
 
-    def datasets_provider(self):
+    def datasets_provider(self) -> DatasetsProvider:
         raise NotImplementedError
 
-    def forward_step(self):
+    def forward_step(self) -> ForwardStep:
         raise NotImplementedError
 
     def pretrain_kwargs(self) -> PretrainKwargs:
@@ -67,7 +75,7 @@ class Recipe:
         finally:
             sys.argv = saved_argv
 
-    def build_pretrain_config(self, args):
+    def build_pretrain_config(self, args: Namespace) -> PretrainConfigContainer:
         """Build the ``PretrainConfigContainer`` that ``pretrain()`` consumes and register it."""
         cfg = pretrain_cfg_container_from_args(
             args, self.build_model_config(args), data_cfg=self.build_data_config(args)
@@ -111,20 +119,20 @@ class Recipe:
 class GPTRecipe(Recipe):
     """Upstream GPT model through the Megatron-Speech entry point."""
 
-    def build_model_config(self, args):
+    def build_model_config(self, args: Namespace) -> ModelConfig:
         return gpt_config_from_args(args)
 
-    def build_data_config(self, args):
+    def build_data_config(self, args: Namespace) -> DataConfig | None:
         return gpt_data_config_from_args(args)
 
-    def datasets_provider(self):
+    def datasets_provider(self) -> DatasetsProvider:
         import pretrain_gpt  # third_party/Megatron-LM is on sys.path via the venv .pth file
 
         provider = pretrain_gpt.train_valid_test_datasets_provider
         provider.is_distributed = True
         return provider
 
-    def forward_step(self):
+    def forward_step(self) -> ForwardStep:
         import pretrain_gpt
 
         return pretrain_gpt.forward_step
