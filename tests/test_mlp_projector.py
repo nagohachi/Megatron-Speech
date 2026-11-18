@@ -7,7 +7,8 @@ from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import TransformerConfig
 
-from megatron_speech.components.projectors.mlp import ACTIVATIONS, MLPProjector, MLPProjectorConfig
+from megatron_speech.components.activations import ACTIVATIONS
+from megatron_speech.components.projectors.mlp import MLPProjector, MLPProjectorConfig
 
 pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)
