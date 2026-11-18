@@ -27,9 +27,14 @@ class QFormerProjectorConfig:
 
     ``output_size`` is the LLM's hidden size.
 
-    Each utterance is cut into windows of ``window_size`` encoder frames, and ``num_queries``
-    learned queries read each window. ``window_size=None`` makes the whole utterance one window,
-    as BLIP-2 does for an image.
+    Each utterance is cut into windows of ``window_size`` consecutive encoder frames (the last
+    window may be shorter), and ``num_queries`` learned queries attend to the frames of each
+    window. An utterance of ``n`` frames therefore gives ``ceil(n / window_size) * num_queries``
+    output vectors, in proportion to its length.
+
+    With ``window_size=None`` the utterance is not cut: the queries attend to all of its frames
+    at once, and every utterance gives ``num_queries`` output vectors whatever its length. This
+    is how BLIP-2 reads an image.
     """
 
     input_size: int
