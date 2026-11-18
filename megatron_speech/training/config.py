@@ -20,48 +20,52 @@ type ConfigValue = str | int | float | bool | None | list[ConfigValue] | dict[st
 type ConfigDict = dict[str, ConfigValue]
 
 
-def merge_dicts(base: ConfigDict, override: ConfigDict) -> ConfigDict:
-    """Recursively merge ``override`` into a copy of ``base``."""
-    out = copy.deepcopy(base)
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
-            out[key] = merge_dicts(out[key], value)
-        else:
-            out[key] = copy.deepcopy(value)
-    return out
+class RunConfigLoader:
+    """Reads a run config from YAML files and applies command-line overrides."""
 
+    @classmethod
+    def load(cls, path: Path, overrides: list[str] | None = None) -> ConfigDict:
+        cfg = cls.load_file(path)
+        cfg = cls.apply_overrides(cfg, overrides or [])
+        cfg.setdefault("model", {})
+        cfg.setdefault("data", {})
+        cfg.setdefault("megatron", {})
+        return cfg
 
-def load_config_file(path: Path) -> ConfigDict:
-    with open(path) as f:
-        cfg = yaml.safe_load(f) or {}
-    base = cfg.pop("base", None)
-    if base is not None:
-        base_path = (path.parent / base) if not Path(base).is_absolute() else Path(base)
-        cfg = merge_dicts(load_config_file(base_path), cfg)
-    return cfg
+    @classmethod
+    def load_file(cls, path: Path) -> ConfigDict:
+        with open(path) as f:
+            cfg = yaml.safe_load(f) or {}
+        base = cfg.pop("base", None)
+        if base is not None:
+            base_path = (path.parent / base) if not Path(base).is_absolute() else Path(base)
+            cfg = cls.merge_dicts(cls.load_file(base_path), cfg)
+        return cfg
 
+    @classmethod
+    def merge_dicts(cls, base: ConfigDict, override: ConfigDict) -> ConfigDict:
+        """Recursively merge ``override`` into a copy of ``base``."""
+        out = copy.deepcopy(base)
+        for key, value in override.items():
+            if isinstance(value, dict) and isinstance(out.get(key), dict):
+                out[key] = cls.merge_dicts(out[key], value)
+            else:
+                out[key] = copy.deepcopy(value)
+        return out
 
-def apply_overrides(cfg: ConfigDict, overrides: list[str]) -> ConfigDict:
-    cfg = copy.deepcopy(cfg)
-    for token in overrides:
-        if "=" not in token:
-            raise ValueError(f"override must look like key.subkey=value, got {token!r}")
-        dotted, raw = token.split("=", 1)
-        value = yaml.safe_load(raw) if raw != "" else None
-        node = cfg
-        keys = dotted.split(".")
-        for key in keys[:-1]:
-            node = node.setdefault(key, {})
-            if not isinstance(node, dict):
-                raise ValueError(f"cannot set {dotted}: {key} is not a mapping")
-        node[keys[-1]] = value
-    return cfg
-
-
-def load_config(path: Path, overrides: list[str] | None = None) -> ConfigDict:
-    cfg = load_config_file(path)
-    cfg = apply_overrides(cfg, overrides or [])
-    cfg.setdefault("model", {})
-    cfg.setdefault("data", {})
-    cfg.setdefault("megatron", {})
-    return cfg
+    @staticmethod
+    def apply_overrides(cfg: ConfigDict, overrides: list[str]) -> ConfigDict:
+        cfg = copy.deepcopy(cfg)
+        for token in overrides:
+            if "=" not in token:
+                raise ValueError(f"override must look like key.subkey=value, got {token!r}")
+            dotted, raw = token.split("=", 1)
+            value = yaml.safe_load(raw) if raw != "" else None
+            node = cfg
+            keys = dotted.split(".")
+            for key in keys[:-1]:
+                node = node.setdefault(key, {})
+                if not isinstance(node, dict):
+                    raise ValueError(f"cannot set {dotted}: {key} is not a mapping")
+            node[keys[-1]] = value
+        return cfg
