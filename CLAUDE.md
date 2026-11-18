@@ -12,6 +12,7 @@ Ruff enforces the mechanical rules (`ruff check` and `ruff format --check`, run 
 - Function and method names start with a verb (`build_model_config`, `get_forward_step`, `merge_dicts`), not a noun phrase (`forward_step`, `pretrain_kwargs`). Use the verb that the surrounding code already uses for the same kind of action: in `megatron_speech/training`, `build_` creates a config or dict and `get_` returns an existing object. The exceptions are `@property` methods, dunder methods, `main` and pytest fixtures (a fixture's name is the name of the value that tests receive).
 - Functions that work on the same data are methods of one class, not separate module-level functions. For example, reading, merging and overriding a run config are methods of `RunConfigLoader`.
 - Do not split code out into a function or method whose only caller is one function in the same file; write the code in that function. Functions called from other files (`RunConfigLoader.load`) are not affected. The exceptions are a function that calls itself (`RunConfigLoader.merge_dicts`) and a method that subclasses override (the hooks of `Recipe`). Split the code out when a second caller appears.
+- A component (encoder, projector, ...) takes its architecture, such as the number of layers, the sizes and the activation, from its config. Do not fix them in code.
 - A module covers one topic. Do not add a module that collects helpers for unrelated topics (argument parsing, process groups, checkpoints, ...); put each helper in the module or class that uses it.
 
 ## Comments
