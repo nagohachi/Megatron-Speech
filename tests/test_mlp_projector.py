@@ -1,3 +1,4 @@
+import logging
 from itertools import pairwise
 
 import pytest
@@ -8,6 +9,7 @@ from megatron.core.transformer import TransformerConfig
 from megatron_speech.components.projectors.mlp import ACTIVATIONS, MLPProjector, MLPProjectorConfig
 
 pytestmark = pytest.mark.gpu
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.parametrize(("num_layers", "activation"), [(1, "gelu"), (2, "gelu"), (3, "silu")])
@@ -52,6 +54,8 @@ def test_matches_torch_linear_layers(
         actual = projector(x)
 
     rel_error = ((actual - expected).abs().max() / expected.abs().max()).item()
-    print(f"TP={tensor_parallel_size} layers={num_layers}: max relative error {rel_error:.2e}")
+    logger.info(
+        "TP=%d layers=%d: max relative error %.2e", tensor_parallel_size, num_layers, rel_error
+    )
     assert actual.shape == (10, 64)
     assert rel_error < 1e-5

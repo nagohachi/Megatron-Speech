@@ -2,7 +2,7 @@
 
 The automated review (`.github/workflows/claude-code-review.yml`) checks every pull request against the rules in this file. Each rule is a requirement: a change that breaks one is a CLAUDE.md violation, including rules about naming, structure, comments and documentation.
 
-Ruff enforces the mechanical rules (`ruff check` and `ruff format --check`, run by `.github/workflows/ruff.yml`; settings in `pyproject.toml`): every parameter and return value is annotated, every class, function and method has a docstring, `typing.Any` and `from __future__ import annotations` are banned, and `Callable` and the other ABCs come from `collections.abc`. The rules below are the ones Ruff cannot check.
+Ruff enforces the mechanical rules (`ruff check` and `ruff format --check`, run by `.github/workflows/ruff.yml`; settings in `pyproject.toml`): every parameter and return value is annotated, every class, function and method has a docstring, `print` is banned (log with `logging`), `typing.Any` and `from __future__ import annotations` are banned, and `Callable` and the other ABCs come from `collections.abc`. The rules below are the ones Ruff cannot check.
 
 ## Python
 
