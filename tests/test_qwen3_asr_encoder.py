@@ -10,7 +10,10 @@ from transformers.models.qwen3_asr.configuration_qwen3_asr import (
     Qwen3ASREncoderConfig as HFEncoderConfig,
 )
 from transformers.models.qwen3_asr.modeling_qwen3_asr import Qwen3ASREncoder as HFEncoder
-from transformers.models.qwen3_asr.modeling_qwen3_asr import get_audio_cu_seqlens
+from transformers.models.qwen3_asr.modeling_qwen3_asr import (
+    _get_feat_extract_output_lengths,
+    get_audio_cu_seqlens,
+)
 
 from megatron_speech.components.encoders.qwen3_asr import (
     Qwen3ASREncoder,
@@ -184,7 +187,7 @@ def run_reference(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tenso
 
 
 def test_windows_match_hf() -> None:
-    """The attention windows equal the ones Hugging Face computes for the padded batch."""
+    """The attention windows equal the ones Hugging Face computes for the same utterances."""
     inputs = Qwen3ASREncoderInputs.build(
         [torch.zeros(1, n) for n in UTTERANCE_FRAMES], ENCODER_CONFIG
     )
@@ -201,7 +204,31 @@ def test_windows_match_hf() -> None:
         ENCODER_CONFIG.n_window,
     )
     assert inputs.cu_seqlens.tolist() == expected.tolist()
-    assert inputs.input_features.shape == (len(chunk_lengths), 1, chunk_frames)
+    assert inputs.max_seqlen == int((expected[1:] - expected[:-1]).max())
+
+
+def test_token_counts_match_hf() -> None:
+    """Each utterance gives as many tokens as Hugging Face's length formula says."""
+    expected = _get_feat_extract_output_lengths(
+        torch.tensor(UTTERANCE_FRAMES), ENCODER_CONFIG.n_window
+    ).tolist()
+    assert [ENCODER_CONFIG.calc_num_tokens(n) for n in UTTERANCE_FRAMES] == expected
+    inputs = Qwen3ASREncoderInputs.build(
+        [torch.zeros(1, n) for n in UTTERANCE_FRAMES], ENCODER_CONFIG
+    )
+    assert inputs.token_index.numel() == sum(expected)
+
+
+def test_chunks_hold_the_frames(mels: list[torch.Tensor]) -> None:
+    """The chunks hold every frame once, in order, and zeros after the last frame."""
+    inputs = Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG)
+    chunks = iter(inputs.input_features)
+    for mel in mels:
+        num_chunks = -(-mel.shape[1] // ENCODER_CONFIG.chunk_frames)
+        frames = torch.cat([next(chunks) for _ in range(num_chunks)], dim=1)
+        assert torch.equal(frames[:, : mel.shape[1]], mel)
+        assert not frames[:, mel.shape[1] :].any()
+    assert next(chunks, None) is None
 
 
 @pytest.mark.parametrize("frames", [[], [0, 0]], ids=["no-utterances", "empty-utterances"])
