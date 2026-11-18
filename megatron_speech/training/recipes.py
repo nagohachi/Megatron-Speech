@@ -41,6 +41,7 @@ class Recipe:
     """Base recipe. Subclasses override the hooks that differ between model families."""
 
     def __init__(self, cfg: ConfigDict) -> None:
+        """Keep the run config that ``RunConfigLoader.load`` returned."""
         self.cfg = cfg
 
     # -- hooks -------------------------------------------------------------------------------
@@ -49,21 +50,27 @@ class Recipe:
         return dict(self.cfg["megatron"])
 
     def extra_args_provider(self) -> Callable[[ArgumentParser], ArgumentParser] | None:
+        """Return a function that adds recipe-specific arguments to Megatron's parser, if any."""
         return None
 
     def build_model_config(self, args: Namespace) -> ModelConfig:
+        """Build the model section of the ``PretrainConfigContainer`` from Megatron's args."""
         raise NotImplementedError
 
     def build_data_config(self, args: Namespace) -> DataConfig | None:
+        """Build the data section; None keeps only Megatron's data loader settings."""
         return None
 
     def datasets_provider(self) -> DatasetsProvider:
+        """Return the function that ``pretrain()`` calls to build the train, valid and test data."""
         raise NotImplementedError
 
     def forward_step(self) -> ForwardStep:
+        """Return the function that ``pretrain()`` calls to run a micro-batch through the model."""
         raise NotImplementedError
 
     def pretrain_kwargs(self) -> PretrainKwargs:
+        """Return the optional keyword arguments that this recipe passes to ``pretrain()``."""
         return {}
 
     # -- driver ------------------------------------------------------------------------------
@@ -85,6 +92,7 @@ class Recipe:
         return cfg
 
     def run(self) -> None:
+        """Parse Megatron's args, build the pretrain config and run Megatron's training loop."""
         args = self.parse_megatron_args()
         pretrain(
             self.build_pretrain_config(args),
