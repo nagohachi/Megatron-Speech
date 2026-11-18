@@ -5,9 +5,20 @@
 * ``gpt``         upstream Megatron GPT model and datasets (sanity check of the entry point)
 """
 
+import sys
+from argparse import Namespace
 from typing import Callable, TypedDict
 
-from megatron_speech import compat
+from megatron.core.enums import ModelType
+from megatron.training import pretrain
+from megatron.training.argument_utils import (
+    gpt_config_from_args,
+    gpt_data_config_from_args,
+    pretrain_cfg_container_from_args,
+)
+from megatron.training.arguments import parse_and_validate_args
+from megatron.training.global_vars import set_run_config
+
 from megatron_speech.training.config import ConfigDict
 
 
@@ -47,34 +58,81 @@ class Recipe:
         return {}
 
     # -- driver ------------------------------------------------------------------------------
+    def parse_megatron_args(self) -> Namespace:
+        """Parse, validate and register Megatron's global ``args`` from ``megatron_arg_dict()``."""
+        saved_argv = sys.argv
+        sys.argv = [saved_argv[0], *self.convert_dict_to_argv(self.megatron_arg_dict())]
+        try:
+            return parse_and_validate_args(extra_args_provider=self.extra_args_provider())
+        finally:
+            sys.argv = saved_argv
+
+    def build_pretrain_config(self, args):
+        """Build the ``PretrainConfigContainer`` that ``pretrain()`` consumes and register it."""
+        cfg = pretrain_cfg_container_from_args(
+            args, self.build_model_config(args), data_cfg=self.build_data_config(args)
+        )
+        set_run_config(cfg)
+        return cfg
+
     def run(self) -> None:
-        args = compat.parse_megatron_args(
-            self.megatron_arg_dict(), extra_args_provider=self.extra_args_provider()
+        args = self.parse_megatron_args()
+        pretrain(
+            self.build_pretrain_config(args),
+            self.datasets_provider(),
+            ModelType.encoder_or_decoder,
+            self.forward_step(),
+            **self.pretrain_kwargs(),
         )
-        model_cfg = self.build_model_config(args)
-        run_cfg = compat.build_pretrain_config(args, model_cfg, self.build_data_config(args))
-        compat.run_pretrain(
-            run_cfg, self.datasets_provider(), self.forward_step(), **self.pretrain_kwargs()
-        )
+
+    @staticmethod
+    def convert_dict_to_argv(arg_dict: ConfigDict) -> list[str]:
+        """Convert ``{"micro-batch-size": 1, "bf16": True}`` into Megatron CLI tokens.
+
+        Keys may use ``-`` or ``_``. ``True`` becomes a bare flag, ``False``/``None`` are dropped
+        (write the explicit ``no-...`` flag to turn a default-on option off), lists become
+        space-separated values.
+        """
+        argv: list[str] = []
+        for key, value in arg_dict.items():
+            flag = "--" + key.replace("_", "-")
+            if value is None or value is False:
+                continue
+            if value is True:
+                argv.append(flag)
+            elif isinstance(value, (list, tuple)):
+                argv.append(flag)
+                argv.extend(str(v) for v in value)
+            else:
+                argv.extend([flag, str(value)])
+        return argv
 
 
 class GPTRecipe(Recipe):
     """Upstream GPT model through the Megatron-Speech entry point."""
 
     def build_model_config(self, args):
-        return compat.build_gpt_model_config(args)
+        return gpt_config_from_args(args)
 
     def build_data_config(self, args):
-        return compat.build_gpt_data_config(args)
+        return gpt_data_config_from_args(args)
 
     def datasets_provider(self):
-        return compat.get_upstream_gpt_step_functions()[1]
+        import pretrain_gpt  # third_party/Megatron-LM is on sys.path via the venv .pth file
+
+        provider = pretrain_gpt.train_valid_test_datasets_provider
+        provider.is_distributed = True
+        return provider
 
     def forward_step(self):
-        return compat.get_upstream_gpt_step_functions()[0]
+        import pretrain_gpt
+
+        return pretrain_gpt.forward_step
 
     def pretrain_kwargs(self) -> PretrainKwargs:
-        return {"get_embedding_ranks": compat.get_upstream_gpt_step_functions()[2]}
+        import pretrain_gpt
+
+        return {"get_embedding_ranks": pretrain_gpt.get_embedding_ranks}
 
 
 def get_recipe(model_type: str) -> type[Recipe]:

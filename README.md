@@ -61,7 +61,6 @@ third_party/Megatron-LM/    上流の固定コミット（git submodule status �
 patches/                    Megatron-LM へのパッチ（現在は空）
 apptainer/                  コンテナの起動スクリプトと venv の構築
 megatron_speech/
-  compat.py                 Megatron-LM の API を呼ぶ薄い層
   training/                 学習エントリポイント、設定ファイルの読み込み、recipe
 configs/                    設定ファイルの例
 ```
