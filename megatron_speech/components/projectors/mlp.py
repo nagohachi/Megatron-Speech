@@ -1,6 +1,4 @@
-from collections.abc import Callable
 from dataclasses import dataclass
-from functools import partial
 from itertools import pairwise
 
 import torch
@@ -9,14 +7,8 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import gather_from_tensor_model_parallel_region
 from megatron.core.transformer import MegatronModule, TransformerConfig
 
+from megatron_speech.components.activations import ACTIVATIONS
 from megatron_speech.components.transformer_config import build_component_transformer_config
-
-ACTIVATIONS: dict[str, Callable[[torch.Tensor], torch.Tensor]] = {
-    "gelu": torch.nn.functional.gelu,  # exact (erf) GELU, as torch.nn.GELU() and HF ACT2FN["gelu"]
-    "gelu_tanh": partial(torch.nn.functional.gelu, approximate="tanh"),
-    "relu": torch.nn.functional.relu,
-    "silu": torch.nn.functional.silu,
-}
 
 
 @dataclass
