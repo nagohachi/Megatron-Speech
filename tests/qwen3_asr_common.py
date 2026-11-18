@@ -44,9 +44,12 @@ def make_examples(model_section: dict, hf_dir, num: int, split: str = "test-clea
 
 
 def load_hf_model(hf_dir, dtype=torch.bfloat16):
+    """HF reference model. fp32 uses eager attention: the fp32 SDPA backward may pick a kernel
+    with atomic additions, whose gradients change from run to run."""
     from transformers import Qwen3ASRForConditionalGeneration
 
-    model = Qwen3ASRForConditionalGeneration.from_pretrained(str(hf_dir), dtype=dtype, attn_implementation="sdpa")
+    attn = "eager" if dtype == torch.float32 else "sdpa"
+    model = Qwen3ASRForConditionalGeneration.from_pretrained(str(hf_dir), dtype=dtype, attn_implementation=attn)
     return model.cuda().eval()
 
 
