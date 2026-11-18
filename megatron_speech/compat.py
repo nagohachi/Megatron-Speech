@@ -245,7 +245,12 @@ def initialize_model_parallel_for_tests(
 
     if not torch.distributed.is_initialized():
         os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-        os.environ.setdefault("MASTER_PORT", str(29500 + os.getpid() % 1000))
+        if "MASTER_PORT" not in os.environ:
+            import socket
+
+            with socket.socket() as sock:  # a port the OS reports as free
+                sock.bind(("127.0.0.1", 0))
+                os.environ["MASTER_PORT"] = str(sock.getsockname()[1])
         os.environ.setdefault("RANK", "0")
         os.environ.setdefault("WORLD_SIZE", "1")
         local_rank = int(os.environ.get("LOCAL_RANK", "0"))
