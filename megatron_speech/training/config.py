@@ -11,8 +11,6 @@ Overrides are ``key.subkey=value`` tokens; values are parsed as YAML scalars
 ``base:``; it is loaded first and the current file is merged on top.
 """
 
-from __future__ import annotations
-
 import copy
 from pathlib import Path
 from typing import Any

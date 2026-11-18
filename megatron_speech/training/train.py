@@ -4,8 +4,6 @@
         --config configs/qwen3_asr/finetune_librispeech.yaml [key.subkey=value ...]
 """
 
-from __future__ import annotations
-
 import argparse
 
 from megatron_speech.training.config import load_config

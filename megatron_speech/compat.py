@@ -8,8 +8,6 @@ are stable public APIs of Megatron Core.
 Pinned upstream: third_party/Megatron-LM (see ``git submodule status``).
 """
 
-from __future__ import annotations
-
 import sys
 from contextlib import contextmanager
 from typing import Any, Callable, Iterable

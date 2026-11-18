@@ -5,8 +5,6 @@
 * ``gpt``         upstream Megatron GPT model and datasets (sanity check of the entry point)
 """
 
-from __future__ import annotations
-
 from typing import Any, Callable
 
 from megatron_speech import compat
