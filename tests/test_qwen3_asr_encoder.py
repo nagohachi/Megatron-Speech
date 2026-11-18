@@ -26,6 +26,8 @@ TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 5e-2}
 # Several chunks and windows, a short last chunk, one chunk, a partial chunk and one frame.
 UTTERANCE_FRAMES = [250, 100, 37, 1]
 # Windows of 200 frames (26 tokens) so that the 250-frame utterance spans two of them.
+# Names of the convolutions and the linear layer after them, the same on both sides.
+CONVOLUTIONS = ("conv2d1", "conv2d2", "conv2d3", "conv_out")
 ENCODER_CONFIG = Qwen3ASREncoderConfig(
     num_mel_bins=32,
     hidden_size=64,
@@ -59,52 +61,52 @@ def interleave_qkv(tensors: list[torch.Tensor]) -> torch.Tensor:
 
 
 def list_weight_pairs(encoder: Qwen3ASREncoder, reference: HFEncoder) -> list[WeightPair]:
-    """Pair every parameter of ``encoder`` with the reference parameters it is made of."""
-    pairs = [
-        WeightPair(
-            getattr(encoder, name).weight, [getattr(reference, name).weight], take_first, None
-        )
-        for name in ("conv2d1", "conv2d2", "conv2d3", "conv_out")
-    ] + [
-        WeightPair(getattr(encoder, name).bias, [getattr(reference, name).bias], take_first, None)
-        for name in ("conv2d1", "conv2d2", "conv2d3")
-    ]
-    for ours, theirs in zip(encoder.transformer.layers, reference.layers, strict=True):
-        attention, mlp, hf_attention = ours.self_attention, ours.mlp, theirs.self_attn
-        qkv = [hf_attention.q_proj, hf_attention.k_proj, hf_attention.v_proj]
-        pairs += [
-            WeightPair(attention.linear_qkv.weight, [p.weight for p in qkv], interleave_qkv, 0),
-            WeightPair(attention.linear_qkv.bias, [p.bias for p in qkv], interleave_qkv, 0),
-            WeightPair(
-                attention.linear_qkv.layer_norm_weight,
-                [theirs.self_attn_layer_norm.weight],
-                take_first,
-                None,
-            ),
-            WeightPair(
-                attention.linear_qkv.layer_norm_bias,
-                [theirs.self_attn_layer_norm.bias],
-                take_first,
-                None,
-            ),
-            WeightPair(attention.linear_proj.weight, [hf_attention.out_proj.weight], take_first, 1),
-            WeightPair(attention.linear_proj.bias, [hf_attention.out_proj.bias], take_first, None),
-            WeightPair(mlp.linear_fc1.weight, [theirs.fc1.weight], take_first, 0),
-            WeightPair(mlp.linear_fc1.bias, [theirs.fc1.bias], take_first, 0),
-            WeightPair(
-                mlp.linear_fc1.layer_norm_weight, [theirs.final_layer_norm.weight], take_first, None
-            ),
-            WeightPair(
-                mlp.linear_fc1.layer_norm_bias, [theirs.final_layer_norm.bias], take_first, None
-            ),
-            WeightPair(mlp.linear_fc2.weight, [theirs.fc2.weight], take_first, 1),
-            WeightPair(mlp.linear_fc2.bias, [theirs.fc2.bias], take_first, None),
-        ]
-    final_norm = encoder.transformer.final_layernorm
+    """Pair every parameter of ``encoder`` with the reference parameters it is made of.
+
+    Both sides are looked up by name in ``named_parameters()``.
+    """
+    ours = dict(encoder.named_parameters())
+    theirs = dict(reference.named_parameters())
+
+    def pair(our_name: str, their_names: list[str], split_dim: int | None) -> WeightPair:
+        combine = interleave_qkv if len(their_names) == 3 else take_first
+        return WeightPair(ours[our_name], [theirs[n] for n in their_names], combine, split_dim)
+
+    pairs = [pair(f"{name}.weight", [f"{name}.weight"], None) for name in CONVOLUTIONS]
+    pairs += [pair(f"{name}.bias", [f"{name}.bias"], None) for name in CONVOLUTIONS[:3]]
+    for index in range(ENCODER_CONFIG.num_layers):
+        attention = f"transformer.layers.{index}.self_attention."
+        mlp = f"transformer.layers.{index}.mlp."
+        hf = f"layers.{index}."
+        for suffix in ("weight", "bias"):
+            qkv = [f"{hf}self_attn.{p}_proj.{suffix}" for p in "qkv"]
+            pairs += [
+                pair(f"{attention}linear_qkv.{suffix}", qkv, 0),
+                pair(
+                    f"{attention}linear_qkv.layer_norm_{suffix}",
+                    [f"{hf}self_attn_layer_norm.{suffix}"],
+                    None,
+                ),
+                pair(
+                    f"{attention}linear_proj.{suffix}",
+                    [f"{hf}self_attn.out_proj.{suffix}"],
+                    1 if suffix == "weight" else None,
+                ),
+                pair(f"{mlp}linear_fc1.{suffix}", [f"{hf}fc1.{suffix}"], 0),
+                pair(
+                    f"{mlp}linear_fc1.layer_norm_{suffix}", [f"{hf}final_layer_norm.{suffix}"], None
+                ),
+                pair(
+                    f"{mlp}linear_fc2.{suffix}",
+                    [f"{hf}fc2.{suffix}"],
+                    1 if suffix == "weight" else None,
+                ),
+            ]
     pairs += [
-        WeightPair(final_norm.weight, [reference.ln_post.weight], take_first, None),
-        WeightPair(final_norm.bias, [reference.ln_post.bias], take_first, None),
+        pair(f"transformer.final_layernorm.{s}", [f"ln_post.{s}"], None) for s in ("weight", "bias")
     ]
+    assert len(pairs) == len(ours)
+    assert {id(p.ours) for p in pairs} == {id(p) for p in ours.values()}, "unpaired parameters"
     return pairs
 
 
