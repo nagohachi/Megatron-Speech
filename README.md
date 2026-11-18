@@ -4,23 +4,12 @@
 
 ## 環境構築
 
-NGC PyTorch コンテナ（`~/containers/pytorch_26.05.sif`、torch 2.12、Transformer Engine 2.15）の上に、
-リポジトリ直下の `.venv` を作る。torch、Transformer Engine、flash-attn はコンテナのものを使い、
-`.venv` には不足しているパッケージだけを入れる。
+NGC PyTorch コンテナ（`~/containers/pytorch_26.05.sif`、torch 2.12、Transformer Engine 2.15）を使う。
 
 ```bash
 git submodule update --init
 apptainer/run.sh --no-venv bash apptainer/setup_venv.sh
 ```
-
-`setup_venv.sh` は次の処理をする。
-
-- `patches/*.patch` を Megatron-LM に当てる（現在は空）
-- `python -m venv --system-site-packages .venv` で venv を作る
-- コンテナの torch などの版を制約ファイルに書き出し、それを守って `pip install -e ".[dev,logging]"` を実行する
-  （uv はコンテナの torch を依存の解決に使えないため pip を使う）
-- `third_party/Megatron-LM` を `.pth` で `sys.path` に加える
-- `.venv/bin/torchrun` を置く（コンテナの `torchrun` はシステムの Python で動き、venv を読まないため）
 
 ## 実行
 
