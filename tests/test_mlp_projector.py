@@ -12,16 +12,23 @@ pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)
 
 
+# Largest relative error allowed against the fp32 reference, by parameter dtype.
+TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 2e-2}
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
 @pytest.mark.parametrize(("num_layers", "activation"), [(1, "gelu"), (2, "gelu"), (3, "silu")])
 def test_matches_torch_linear_layers(
-    tensor_parallel_size: int, num_layers: int, activation: str
+    tensor_parallel_size: int, num_layers: int, activation: str, dtype: torch.dtype
 ) -> None:
-    """Copy reference weights into the TP shards; compare outputs and gradients in fp32."""
+    """Copy fp32 reference weights into the TP shards; compare outputs and gradients."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
         num_attention_heads=tensor_parallel_size,
         tensor_model_parallel_size=tensor_parallel_size,
+        bf16=dtype == torch.bfloat16,
+        params_dtype=dtype,
     )
     projector_config = MLPProjectorConfig(
         input_size=48,
@@ -35,8 +42,8 @@ def test_matches_torch_linear_layers(
     torch.manual_seed(0)  # the same reference weights and inputs on every rank
     sizes = [48, *[96] * (num_layers - 1), 64]
     reference = [torch.nn.Linear(n_in, n_out).cuda() for n_in, n_out in pairwise(sizes)]
-    x = torch.randn(10, 48, device="cuda", requires_grad=True)
-    x_ref = x.detach().clone().requires_grad_()
+    x_ref = torch.randn(10, 48, device="cuda", requires_grad=True)
+    x = x_ref.detach().to(dtype).requires_grad_()
     grad_output = torch.randn(10, 64, device="cuda")
 
     # Column-parallel layers (even index) split output features, row-parallel ones input features.
@@ -56,7 +63,7 @@ def test_matches_torch_linear_layers(
             expected = ACTIVATIONS[activation](expected)
     actual = projector(x)
     expected.backward(grad_output)
-    actual.backward(grad_output)
+    actual.backward(grad_output.to(dtype))
 
     compared = {
         "output": (actual, expected),
@@ -72,17 +79,19 @@ def test_matches_torch_linear_layers(
         },
     }
     errors = {
-        name: ((value - target).abs().max() / target.abs().max()).item()
+        name: ((value.float() - target).abs().max() / target.abs().max()).item()
         for name, (value, target) in compared.items()
     }
     logger.info(
-        "TP=%d layers=%d: max relative error %s",
+        "TP=%d layers=%d %s: max relative error %s",
         tensor_parallel_size,
         num_layers,
+        dtype,
         ", ".join(f"{name} {error:.2e}" for name, error in errors.items()),
     )
     assert actual.shape == (10, 64)
-    assert max(errors.values()) < 1e-5, errors
+    assert actual.dtype == dtype
+    assert max(errors.values()) < TOLERANCES[dtype], errors
 
 
 def test_accepts_zero_tokens(tensor_parallel_size: int) -> None:
