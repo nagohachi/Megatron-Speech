@@ -13,6 +13,7 @@ Ruff enforces the mechanical rules (`ruff check` and `ruff format --check`, run 
 - Functions that work on the same data are methods of one class, not separate module-level functions. For example, reading, merging and overriding a run config are methods of `RunConfigLoader`.
 - A function body is at most 40 lines, not counting its docstring and the nested functions defined in it. To shorten a longer function, define its parts as nested functions inside it; the next rule, against functions with one caller, is about module-level functions and methods, not nested functions.
 - Do not split code out into a function or method whose only caller is one function in the same file; write the code in that function. Functions called from other files (`RunConfigLoader.load`) are not affected. The exceptions are a function that calls itself (`RunConfigLoader.merge_dicts`) and a method that subclasses override (the hooks of `Recipe`). Split the code out when a second caller appears.
+- Do not write groups of values as unnamed tuples, such as `[(1, "gelu"), (2, "gelu")]` with the field names in a comment or in the variables that unpack them. Build the objects that the code takes, such as `MLPProjectorConfig`, and write only the fields that differ with `dataclasses.replace` from one base config. (PR #7 called the tuple version too sloppy.)
 - A module covers one topic. Do not add a module that collects helpers for unrelated topics (argument parsing, process groups, checkpoints, ...); put each helper in the module or class that uses it.
 
 ## Comments
