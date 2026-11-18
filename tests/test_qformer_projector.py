@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 
 import pytest
 import torch
@@ -15,31 +16,26 @@ logger = logging.getLogger(__name__)
 # Largest relative error allowed against the fp32 reference, by parameter dtype.
 TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 5e-2}
 UTTERANCE_LENGTHS = [7, 4, 1]
+CU_SEQLENS = [0, 7, 11, 12]
+# (num_layers, cross_attention_frequency, num_queries, window_size)
+SHAPES = [(2, 1, 2, 4), (3, 2, 3, None)]
+SHAPE_LOG = "layers={0.num_layers} queries={0.num_queries} window={0.window_size}"
 
 
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-@pytest.mark.parametrize(
-    ("num_layers", "cross_attention_frequency", "num_queries", "window_size"),
-    [(2, 1, 2, 4), (3, 2, 3, None)],
-)
-def test_matches_hf_blip2_qformer(
-    tensor_parallel_size: int,
-    num_layers: int,
-    cross_attention_frequency: int,
-    num_queries: int,
-    window_size: int | None,
-    dtype: torch.dtype,
-) -> None:
-    """Copy HF Blip2QFormerModel weights into the TP shards; compare outputs and gradients."""
-    llm_config = TransformerConfig(
-        num_layers=1,
-        hidden_size=64,
-        num_attention_heads=tensor_parallel_size,
-        tensor_model_parallel_size=tensor_parallel_size,
-        bf16=dtype == torch.bfloat16,
-        params_dtype=dtype,
-    )
-    projector_config = QFormerProjectorConfig(
+@dataclass
+class Reference:
+    """Hugging Face Q-Former, output projection and query tokens in fp32."""
+
+    qformer: Blip2QFormerModel
+    projection: torch.nn.Linear
+    query_tokens: torch.nn.Parameter
+
+
+@pytest.fixture(name="projector_config", params=SHAPES, ids=str)
+def build_projector_config(request: pytest.FixtureRequest) -> QFormerProjectorConfig:
+    """Small Q-Former shapes: several windows per utterance, and one window per utterance."""
+    num_layers, cross_attention_frequency, num_queries, window_size = request.param
+    return QFormerProjectorConfig(
         input_size=48,
         output_size=80,
         hidden_size=64,
@@ -50,33 +46,55 @@ def test_matches_hf_blip2_qformer(
         num_queries=num_queries,
         window_size=window_size,
     )
-    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
-    projector = QFormerProjector(projector_config, llm_config, pg_collection).cuda()
 
-    torch.manual_seed(0)  # the same reference weights and inputs on every rank
+
+@pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
+def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
+    """Parameter dtype of the projector under test."""
+    return request.param
+
+
+@pytest.fixture(name="reference")
+def build_reference(projector_config: QFormerProjectorConfig) -> Reference:
+    """Random reference weights, the same on every rank."""
+    torch.manual_seed(0)
     hf_config = Blip2QFormerConfig(
-        hidden_size=64,
-        num_hidden_layers=num_layers,
-        num_attention_heads=4,
-        intermediate_size=128,
+        hidden_size=projector_config.hidden_size,
+        num_hidden_layers=projector_config.num_layers,
+        num_attention_heads=projector_config.num_attention_heads,
+        intermediate_size=projector_config.ffn_hidden_size,
         hidden_dropout_prob=0.0,
         attention_probs_dropout_prob=0.0,
-        cross_attention_frequency=cross_attention_frequency,
-        encoder_hidden_size=48,
+        cross_attention_frequency=projector_config.cross_attention_frequency,
+        encoder_hidden_size=projector_config.input_size,
     )
     hf_config._attn_implementation = "eager"
-    reference = Blip2QFormerModel(hf_config).cuda()
-    projection = torch.nn.Linear(64, 80).cuda()
-    query_tokens = torch.nn.Parameter(torch.randn(num_queries, 64, device="cuda"))
+    qformer = Blip2QFormerModel(hf_config).cuda()
     with torch.no_grad():  # LayerNorms away from (1, 0), so that a missed copy shows
-        for name, param in reference.named_parameters():
+        for name, param in qformer.named_parameters():
             if "layernorm" in name.lower():
                 param.normal_(mean=1.0 if name.endswith("weight") else 0.0, std=0.1)
+    return Reference(
+        qformer=qformer,
+        projection=torch.nn.Linear(
+            projector_config.hidden_size, projector_config.output_size
+        ).cuda(),
+        query_tokens=torch.nn.Parameter(
+            torch.randn(projector_config.num_queries, projector_config.hidden_size, device="cuda")
+        ),
+    )
 
-    # (our module, reference module, split dim): 0 splits output features (column parallel),
-    # 1 splits input features (row parallel), None copies the whole module.
-    pairs = [(projector.layernorm, reference.layernorm, None)]
-    for ours, theirs in zip(projector.layers, reference.encoder.layer, strict=True):
+
+def list_weight_pairs(
+    projector: QFormerProjector, reference: Reference
+) -> list[tuple[torch.nn.Module, torch.nn.Module, int | None]]:
+    """Pair each module of ``projector`` with its reference module and its split dim.
+
+    Dim 0 splits output features (column parallel), dim 1 input features (row parallel), and
+    None means the module is not split.
+    """
+    pairs = [(projector.layernorm, reference.qformer.layernorm, None)]
+    for ours, theirs in zip(projector.layers, reference.qformer.encoder.layer, strict=True):
         assert (ours.cross_attention is not None) == theirs.has_cross_attention
         attentions = [(ours.self_attention, theirs.attention)]
         if ours.cross_attention is not None:
@@ -94,78 +112,140 @@ def test_matches_hf_blip2_qformer(
             (ours.fc2, theirs.output_query.dense, 1),
             (ours.mlp_layernorm, theirs.output_query.LayerNorm, None),
         ]
-    pairs.append((projector.projection, projection, 0))
+    pairs.append((projector.projection, reference.projection, 0))
+    return pairs
 
-    rank = parallel_state.get_tensor_model_parallel_rank()
+
+def take_shard(tensor: torch.Tensor, dim: int | None) -> torch.Tensor:
+    """This rank's part of ``tensor`` split along ``dim``, or all of it for None."""
+    if dim is None:
+        return tensor
+    size = parallel_state.get_tensor_model_parallel_world_size()
+    return tensor.chunk(size, dim)[parallel_state.get_tensor_model_parallel_rank()]
+
+
+@pytest.fixture(name="projector")
+def build_projector(
+    projector_config: QFormerProjectorConfig,
+    reference: Reference,
+    dtype: torch.dtype,
+    tensor_parallel_size: int,
+) -> QFormerProjector:
+    """QFormerProjector that holds this rank's shards of the reference weights."""
+    llm_config = TransformerConfig(
+        num_layers=1,
+        hidden_size=64,
+        num_attention_heads=tensor_parallel_size,
+        tensor_model_parallel_size=tensor_parallel_size,
+        bf16=dtype == torch.bfloat16,
+        params_dtype=dtype,
+    )
+    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+    projector = QFormerProjector(projector_config, llm_config, pg_collection).cuda()
     with torch.no_grad():
-        projector.query_tokens.copy_(query_tokens)
-        for ours, theirs, dim in pairs:
-            weight = (
-                theirs.weight
-                if dim is None
-                else theirs.weight.chunk(tensor_parallel_size, dim)[rank]
-            )
-            bias = theirs.bias.chunk(tensor_parallel_size)[rank] if dim == 0 else theirs.bias
+        projector.query_tokens.copy_(reference.query_tokens)
+        for ours, theirs, dim in list_weight_pairs(projector, reference):
+            weight = take_shard(theirs.weight, dim)
             assert ours.weight.shape == weight.shape
             ours.weight.copy_(weight)
-            ours.bias.copy_(bias)
+            ours.bias.copy_(take_shard(theirs.bias, 0 if dim == 0 else None))
+    return projector
 
-    cu_seqlens = torch.tensor([0, 7, 11, 12], dtype=torch.int32, device="cuda")
-    frames_ref = torch.randn(sum(UTTERANCE_LENGTHS), 48, device="cuda", requires_grad=True)
-    frames = frames_ref.detach().to(dtype).requires_grad_()
 
-    # Cut the utterances into zero-padded windows, written independently of QFormerProjector.
+@pytest.fixture(name="frames")
+def build_frames() -> torch.Tensor:
+    """fp32 encoder frames of UTTERANCE_LENGTHS, the same on every rank."""
+    torch.manual_seed(1)
+    return torch.randn(sum(UTTERANCE_LENGTHS), 48, device="cuda", requires_grad=True)
+
+
+def run_reference(
+    reference: Reference, frames: torch.Tensor, window_size: int | None
+) -> torch.Tensor:
+    """Cut the utterances into zero-padded windows and run the Hugging Face model on them.
+
+    Written independently of ``QFormerProjector.forward``.
+    """
     size = window_size or max(UTTERANCE_LENGTHS)
     windows, masks = [], []
-    for start, length in zip(cu_seqlens[:-1].tolist(), UTTERANCE_LENGTHS, strict=True):
+    start = 0
+    for length in UTTERANCE_LENGTHS:
         for offset in range(0, length, size):
             count = min(size, length - offset)
-            window = frames_ref[start + offset : start + offset + count]
+            window = frames[start + offset : start + offset + count]
             windows.append(torch.nn.functional.pad(window, (0, 0, 0, size - count)))
             masks.append(torch.arange(size, device="cuda") < count)
-    hf_output = reference(
-        query_embeds=query_tokens.expand(len(windows), -1, -1),
+        start += length
+    hidden = reference.qformer(
+        query_embeds=reference.query_tokens.expand(len(windows), -1, -1),
         encoder_hidden_states=torch.stack(windows),
         encoder_attention_mask=torch.stack(masks).long(),
     ).last_hidden_state
-    expected = projection(hf_output).reshape(-1, 80)
-    actual = projector(frames, cu_seqlens)
+    output = reference.projection(hidden)
+    return output.reshape(-1, output.shape[-1])
+
+
+def calc_relative_error(value: torch.Tensor, target: torch.Tensor) -> float:
+    """Largest absolute difference divided by the largest absolute target value."""
+    return ((value.float() - target).abs().max() / target.abs().max()).item()
+
+
+def test_output_matches_hf(
+    projector: QFormerProjector,
+    reference: Reference,
+    projector_config: QFormerProjectorConfig,
+    frames: torch.Tensor,
+    dtype: torch.dtype,
+) -> None:
+    """The projector output equals the Hugging Face Q-Former followed by the projection."""
+    cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
+    with torch.no_grad():
+        expected = run_reference(reference, frames, projector_config.window_size)
+        actual = projector(frames.to(dtype), cu_seqlens)
+    error = calc_relative_error(actual, expected)
+    logger.info(
+        "%s %s: output max relative error %.2e", SHAPE_LOG.format(projector_config), dtype, error
+    )
+    assert actual.shape == expected.shape
+    assert error < TOLERANCES[dtype]
+
+
+def test_gradients_match_hf(
+    projector: QFormerProjector,
+    reference: Reference,
+    projector_config: QFormerProjectorConfig,
+    frames: torch.Tensor,
+    dtype: torch.dtype,
+) -> None:
+    """Gradients of the input, the queries and every weight equal the reference ones."""
+    cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
+    our_frames = frames.detach().to(dtype).requires_grad_()
+    expected = run_reference(reference, frames, projector_config.window_size)
+    actual = projector(our_frames, cu_seqlens)
     grad_output = torch.randn_like(expected)
     expected.backward(grad_output)
     actual.backward(grad_output.to(dtype))
 
-    compared = {
-        "output": (actual, expected),
-        "input grad": (frames.grad, frames_ref.grad),
-        "query grad": (projector.query_tokens.grad, query_tokens.grad),
-    }
-    for index, (ours, theirs, dim) in enumerate(pairs):
-        target = theirs.weight.grad
-        if dim is not None:
-            target = target.chunk(tensor_parallel_size, dim)[rank]
-        compared[f"weight grad {index}"] = (ours.weight.grad, target)
     errors = {
-        name: ((value.float() - target).abs().max() / target.abs().max()).item()
-        for name, (value, target) in compared.items()
+        "input": calc_relative_error(our_frames.grad, frames.grad),
+        "queries": calc_relative_error(projector.query_tokens.grad, reference.query_tokens.grad),
+        "weights": max(
+            calc_relative_error(ours.weight.grad, take_shard(theirs.weight.grad, dim))
+            for ours, theirs, dim in list_weight_pairs(projector, reference)
+        ),
     }
-    weight_errors = [error for name, error in errors.items() if name.startswith("weight grad")]
     logger.info(
-        "TP=%d layers=%d queries=%d window=%s %s: max relative error %s",
-        tensor_parallel_size,
-        num_layers,
-        num_queries,
-        window_size,
+        "%s %s: gradient max relative error %s",
+        SHAPE_LOG.format(projector_config),
         dtype,
-        f"output {errors['output']:.2e}, input grad {errors['input grad']:.2e}, "
-        f"query grad {errors['query grad']:.2e}, weight grads up to {max(weight_errors):.2e}",
+        ", ".join(f"{name} {error:.2e}" for name, error in errors.items()),
     )
-    assert actual.shape == (len(windows) * num_queries, 80)
     assert max(errors.values()) < TOLERANCES[dtype], errors
 
 
 @pytest.mark.parametrize("cu_seqlens", [[0], [0, 0]])
 def test_accepts_no_frames(tensor_parallel_size: int, cu_seqlens: list[int]) -> None:
-    """No utterances, or one utterance without frames, give no output tokens."""
+    """No utterances, or one utterance without frames, give no output vectors."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
