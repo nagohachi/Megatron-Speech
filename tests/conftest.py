@@ -13,9 +13,12 @@ from megatron.core import parallel_state
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
 
-@pytest.fixture(scope="session")
-def tensor_parallel_size() -> Iterator[int]:
-    """Set up torch.distributed and Megatron's process groups with TP over all processes."""
+@pytest.fixture(scope="session", name="tensor_parallel_size")
+def init_model_parallel() -> Iterator[int]:
+    """Set up torch.distributed and Megatron's process groups with TP over all processes.
+
+    Tests receive the TP size as ``tensor_parallel_size``.
+    """
     if "MASTER_PORT" not in os.environ:  # one process started by pytest, not by torch.distributed
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
