@@ -1,9 +1,3 @@
-"""Fixtures shared by the tests.
-
-GPU tests run in one process (``python -m pytest``) or with tensor parallelism over several
-processes (``python -m torch.distributed.run --nproc-per-node 2 -m pytest``).
-"""
-
 import os
 
 # Tests compare against fp32 references; TF32 GEMMs, which the NGC container enables in cuBLAS

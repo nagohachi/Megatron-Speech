@@ -1,5 +1,3 @@
-"""Two-layer MLP projector from encoder outputs to the LLM embedding space."""
-
 from dataclasses import dataclass
 
 import torch

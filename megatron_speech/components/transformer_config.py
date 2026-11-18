@@ -1,5 +1,3 @@
-"""``TransformerConfig`` of a speech component (encoder, projector), derived from the LLM's."""
-
 from collections.abc import Callable
 
 import torch

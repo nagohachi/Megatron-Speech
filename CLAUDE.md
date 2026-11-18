@@ -16,6 +16,7 @@ Ruff enforces the mechanical rules (`ruff check` and `ruff format --check`, run 
 
 ## Comments
 
+- Do not write a module docstring that only repeats the docstrings of the module's classes and functions, or the commands in README.md.
 - A comment explains the code it is attached to. Do not write comments about other files, such as a comment above `dependencies` in `pyproject.toml` that explains which packages the container provides and how `setup_venv.sh` puts Megatron-LM on `sys.path`.
 
 ## Environment and commands

@@ -1,10 +1,3 @@
-"""``MLPProjector`` matches ``torch.nn.Linear`` layers that hold the same weights.
-
-    apptainer/run.sh python -m pytest tests/test_mlp_projector.py
-    CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh python -m torch.distributed.run --nproc-per-node 2 \
-        -m pytest tests/test_mlp_projector.py
-"""
-
 import pytest
 import torch
 from megatron.core import parallel_state
