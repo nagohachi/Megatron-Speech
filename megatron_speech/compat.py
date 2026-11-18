@@ -96,12 +96,6 @@ def run_pretrain(cfg, datasets_provider, forward_step_func, **kwargs):
     return pretrain(cfg, datasets_provider, ModelType.encoder_or_decoder, forward_step_func, **kwargs)
 
 
-def print_rank_0(message: str) -> None:
-    from megatron.training import print_rank_0 as _print_rank_0
-
-    _print_rank_0(message)
-
-
 def get_timers():
     from megatron.training import get_timers as _get_timers
 
