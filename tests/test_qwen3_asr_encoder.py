@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 # Largest relative error allowed against the fp32 reference, by parameter dtype.
 TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 5e-2}
-# Several chunks and windows, a short last chunk, one chunk, a partial chunk and one frame.
-UTTERANCE_FRAMES = [250, 100, 37, 1]
+# Several chunks and windows, no frames, one chunk, a partial chunk and one frame.
+UTTERANCE_FRAMES = [250, 0, 100, 37, 1]
 # Names of the convolutions and the linear layer after them, the same on both sides.
 CONVOLUTIONS = ("conv2d1", "conv2d2", "conv2d3", "conv_out")
 # Windows of 200 frames (26 tokens) so that the 250-frame utterance spans two of them.
@@ -258,7 +258,10 @@ def test_chunks_hold_the_frames(
     chunks = iter(cpu_inputs.input_features)
     for mel in mels:
         num_chunks = -(-mel.shape[1] // ENCODER_CONFIG.chunk_frames)
-        frames = torch.cat([next(chunks) for _ in range(num_chunks)], dim=1)
+        # The empty tensor lets an utterance without frames take no chunks.
+        frames = torch.cat(
+            [next(chunks) for _ in range(num_chunks)] + [mel.new_zeros(mel.shape[0], 0)], dim=1
+        )
         assert torch.equal(frames[:, : mel.shape[1]], mel)
         assert not frames[:, mel.shape[1] :].any()
     assert next(chunks, None) is None
