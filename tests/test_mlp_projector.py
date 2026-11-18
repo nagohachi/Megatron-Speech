@@ -129,14 +129,14 @@ def test_gradients_match_torch(
     dtype: torch.dtype,
 ) -> None:
     """Gradients of the input and of every weight equal the reference ones."""
-    our_inputs = inputs.detach().to(dtype).requires_grad_()
+    projector_inputs = inputs.detach().to(dtype).requires_grad_()
     expected = run_reference(reference, inputs, projector_config.activation)
-    actual = projector(our_inputs)
+    actual = projector(projector_inputs)
     grad_output = torch.randn_like(expected)
     expected.backward(grad_output)
     actual.backward(grad_output.to(dtype))
 
-    errors = {"input": calc_relative_error(our_inputs.grad, inputs.grad)}
+    errors = {"input": calc_relative_error(projector_inputs.grad, inputs.grad)}
     for index, (layer, ref) in enumerate(zip(projector.layers, reference, strict=True)):
         target = take_shard(ref.weight.grad, get_split_dim(index))
         errors[f"layer {index} weight"] = calc_relative_error(layer.weight.grad, target)

@@ -84,35 +84,62 @@ def build_reference(projector_config: QFormerProjectorConfig) -> Reference:
     )
 
 
-def list_weight_pairs(
-    projector: QFormerProjector, reference: Reference
-) -> list[tuple[torch.nn.Module, torch.nn.Module, int | None]]:
-    """Pair each module of ``projector`` with its reference module and its split dim.
+def list_reference_parameters(reference: Reference) -> dict[str, torch.nn.Parameter]:
+    """Reference parameters under Hugging Face's Q-Former names, with the projection and queries."""
+    return {
+        **dict(reference.qformer.named_parameters()),
+        "projection.weight": reference.projection.weight,
+        "projection.bias": reference.projection.bias,
+        "query_tokens": reference.query_tokens,
+    }
 
-    Dim 0 splits output features (column parallel), dim 1 input features (row parallel), and
-    None means the module is not split.
-    """
-    pairs = [(projector.layernorm, reference.qformer.layernorm, None)]
-    for ours, theirs in zip(projector.layers, reference.qformer.encoder.layer, strict=True):
-        assert (ours.cross_attention is not None) == theirs.has_cross_attention
-        attentions = [(ours.self_attention, theirs.attention)]
-        if ours.cross_attention is not None:
-            attentions.append((ours.cross_attention, theirs.crossattention))
-        for our_attention, their_attention in attentions:
-            pairs += [
-                (our_attention.query, their_attention.attention.query, 0),
-                (our_attention.key, their_attention.attention.key, 0),
-                (our_attention.value, their_attention.attention.value, 0),
-                (our_attention.dense, their_attention.output.dense, 1),
-                (our_attention.layernorm, their_attention.output.LayerNorm, None),
+
+def map_hf_tensors(
+    hf_tensors: dict[str, torch.Tensor], config: QFormerProjectorConfig
+) -> dict[str, torch.Tensor]:
+    """Reference weights or gradients under the projector's parameter names, before splitting."""
+    mapped = {
+        name: hf_tensors[name] for name in ("query_tokens", "projection.weight", "projection.bias")
+    }
+    for suffix in ("weight", "bias"):
+        mapped[f"layernorm.{suffix}"] = hf_tensors[f"layernorm.{suffix}"]
+    for index in range(config.num_layers):
+        layer, hf_layer = f"layers.{index}.", f"encoder.layer.{index}."
+        attentions = {"self_attention": "attention"}
+        if index % config.cross_attention_frequency == 0:
+            attentions["cross_attention"] = "crossattention"
+        for suffix in ("weight", "bias"):
+            for attention, hf_attention in attentions.items():
+                for projection in ("query", "key", "value"):
+                    mapped[f"{layer}{attention}.{projection}.{suffix}"] = hf_tensors[
+                        f"{hf_layer}{hf_attention}.attention.{projection}.{suffix}"
+                    ]
+                mapped[f"{layer}{attention}.dense.{suffix}"] = hf_tensors[
+                    f"{hf_layer}{hf_attention}.output.dense.{suffix}"
+                ]
+                mapped[f"{layer}{attention}.layernorm.{suffix}"] = hf_tensors[
+                    f"{hf_layer}{hf_attention}.output.LayerNorm.{suffix}"
+                ]
+            mapped[f"{layer}fc1.{suffix}"] = hf_tensors[
+                f"{hf_layer}intermediate_query.dense.{suffix}"
             ]
-        pairs += [
-            (ours.fc1, theirs.intermediate_query.dense, 0),
-            (ours.fc2, theirs.output_query.dense, 1),
-            (ours.mlp_layernorm, theirs.output_query.LayerNorm, None),
-        ]
-    pairs.append((projector.projection, reference.projection, 0))
-    return pairs
+            mapped[f"{layer}fc2.{suffix}"] = hf_tensors[f"{hf_layer}output_query.dense.{suffix}"]
+            mapped[f"{layer}mlp_layernorm.{suffix}"] = hf_tensors[
+                f"{hf_layer}output_query.LayerNorm.{suffix}"
+            ]
+    return mapped
+
+
+def get_split_dim(name: str) -> int | None:
+    """Dim of the projector parameter ``name`` that tensor parallelism splits, if any."""
+    column_parallel = ("query", "key", "value", "fc1", "projection")
+    if name.endswith(
+        tuple(f"{layer}.{s}" for layer in column_parallel for s in ("weight", "bias"))
+    ):
+        return 0  # output features
+    if name.endswith(("dense.weight", "fc2.weight")):
+        return 1  # input features
+    return None
 
 
 @pytest.fixture(name="projector")
@@ -133,13 +160,15 @@ def build_projector(
     )
     pg_collection = ProcessGroupCollection.use_mpu_process_groups()
     projector = QFormerProjector(projector_config, llm_config, pg_collection).cuda()
+    projector_parameters = dict(projector.named_parameters())
+    reference_weights = {n: p.detach() for n, p in list_reference_parameters(reference).items()}
+    hf_weights = map_hf_tensors(reference_weights, projector_config)
+    assert hf_weights.keys() == projector_parameters.keys()
     with torch.no_grad():
-        projector.query_tokens.copy_(reference.query_tokens)
-        for ours, theirs, dim in list_weight_pairs(projector, reference):
-            weight = take_shard(theirs.weight, dim)
-            assert ours.weight.shape == weight.shape
-            ours.weight.copy_(weight)
-            ours.bias.copy_(take_shard(theirs.bias, 0 if dim == 0 else None))
+        for name, weight in hf_weights.items():
+            shard = take_shard(weight, get_split_dim(name))
+            assert projector_parameters[name].shape == shard.shape
+            projector_parameters[name].copy_(shard)
     return projector
 
 
@@ -203,21 +232,25 @@ def test_gradients_match_hf(
     frames: torch.Tensor,
     dtype: torch.dtype,
 ) -> None:
-    """Gradients of the input, the queries and every weight equal the reference ones."""
+    """Gradients of the input and of every parameter equal the reference ones."""
     cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
-    our_frames = frames.detach().to(dtype).requires_grad_()
+    projector_frames = frames.detach().to(dtype).requires_grad_()
     expected = run_reference(reference, frames, projector_config.window_size)
-    actual = projector(our_frames, cu_seqlens)
+    actual = projector(projector_frames, cu_seqlens)
     grad_output = torch.randn_like(expected)
     expected.backward(grad_output)
     actual.backward(grad_output.to(dtype))
 
+    reference_gradients = {n: p.grad for n, p in list_reference_parameters(reference).items()}
+    hf_gradients = map_hf_tensors(reference_gradients, projector_config)
     errors = {
-        "input": calc_relative_error(our_frames.grad, frames.grad),
-        "queries": calc_relative_error(projector.query_tokens.grad, reference.query_tokens.grad),
-        "weights": max(
-            calc_relative_error(ours.weight.grad, take_shard(theirs.weight.grad, dim))
-            for ours, theirs, dim in list_weight_pairs(projector, reference)
+        "input": calc_relative_error(projector_frames.grad, frames.grad),
+        # The key bias adds the same value to every score of a query, which softmax ignores,
+        # so its true gradient is zero and both sides hold only rounding errors.
+        "parameters": max(
+            calc_relative_error(param.grad, take_shard(hf_gradients[name], get_split_dim(name)))
+            for name, param in projector.named_parameters()
+            if not name.endswith("key.bias")
         ),
     }
     logger.info(
