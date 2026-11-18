@@ -45,11 +45,11 @@ class Recipe:
         self.cfg = cfg
 
     # -- hooks -------------------------------------------------------------------------------
-    def megatron_arg_dict(self) -> ConfigDict:
+    def build_megatron_arg_dict(self) -> ConfigDict:
         """Megatron CLI arguments; recipes add the ones derived from the model."""
         return dict(self.cfg["megatron"])
 
-    def extra_args_provider(self) -> Callable[[ArgumentParser], ArgumentParser] | None:
+    def get_extra_args_provider(self) -> Callable[[ArgumentParser], ArgumentParser] | None:
         """Return a function that adds recipe-specific arguments to Megatron's parser, if any."""
         return None
 
@@ -61,15 +61,15 @@ class Recipe:
         """Build the data section; None keeps only Megatron's data loader settings."""
         return None
 
-    def datasets_provider(self) -> DatasetsProvider:
+    def get_datasets_provider(self) -> DatasetsProvider:
         """Return the function that ``pretrain()`` calls to build the train, valid and test data."""
         raise NotImplementedError
 
-    def forward_step(self) -> ForwardStep:
+    def get_forward_step(self) -> ForwardStep:
         """Return the function that ``pretrain()`` calls to run a micro-batch through the model."""
         raise NotImplementedError
 
-    def pretrain_kwargs(self) -> PretrainKwargs:
+    def build_pretrain_kwargs(self) -> PretrainKwargs:
         """Return the optional keyword arguments that this recipe passes to ``pretrain()``."""
         return {}
 
@@ -77,12 +77,12 @@ class Recipe:
     def run(self) -> None:
         """Parse Megatron's args, build the pretrain config and run Megatron's training loop.
 
-        ``megatron_arg_dict()`` becomes Megatron CLI tokens: keys may use ``-`` or ``_``, ``True``
-        is a bare flag, ``False`` and ``None`` drop the flag (write the explicit ``no-...`` flag to
-        turn a default-on option off), and lists become space-separated values.
+        ``build_megatron_arg_dict()`` becomes Megatron CLI tokens: keys may use ``-`` or ``_``,
+        ``True`` is a bare flag, ``False`` and ``None`` drop the flag (write the explicit
+        ``no-...`` flag to turn a default-on option off), and lists become space-separated values.
         """
         argv: list[str] = []
-        for key, value in self.megatron_arg_dict().items():
+        for key, value in self.build_megatron_arg_dict().items():
             flag = "--" + key.replace("_", "-")
             if value is None or value is False:
                 continue
@@ -98,7 +98,7 @@ class Recipe:
         saved_argv = sys.argv
         sys.argv = [saved_argv[0], *argv]
         try:
-            args = parse_and_validate_args(extra_args_provider=self.extra_args_provider())
+            args = parse_and_validate_args(extra_args_provider=self.get_extra_args_provider())
         finally:
             sys.argv = saved_argv
 
@@ -108,10 +108,10 @@ class Recipe:
         set_run_config(pretrain_config)
         pretrain(
             pretrain_config,
-            self.datasets_provider(),
+            self.get_datasets_provider(),
             ModelType.encoder_or_decoder,
-            self.forward_step(),
-            **self.pretrain_kwargs(),
+            self.get_forward_step(),
+            **self.build_pretrain_kwargs(),
         )
 
 
@@ -126,7 +126,7 @@ class GPTRecipe(Recipe):
         """Build the upstream GPT data section (``--data-path``, ``--mock-data``, ...)."""
         return gpt_data_config_from_args(args)
 
-    def datasets_provider(self) -> DatasetsProvider:
+    def get_datasets_provider(self) -> DatasetsProvider:
         """Return the datasets provider of ``pretrain_gpt.py``."""
         import pretrain_gpt  # third_party/Megatron-LM is on sys.path via the venv .pth file
 
@@ -134,13 +134,13 @@ class GPTRecipe(Recipe):
         provider.is_distributed = True
         return provider
 
-    def forward_step(self) -> ForwardStep:
+    def get_forward_step(self) -> ForwardStep:
         """Return the forward step of ``pretrain_gpt.py``."""
         import pretrain_gpt
 
         return pretrain_gpt.forward_step
 
-    def pretrain_kwargs(self) -> PretrainKwargs:
+    def build_pretrain_kwargs(self) -> PretrainKwargs:
         """Pass ``get_embedding_ranks`` of ``pretrain_gpt.py``, as its ``__main__`` block does."""
         import pretrain_gpt
 
