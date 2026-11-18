@@ -14,11 +14,18 @@ from megatron_speech.components.transformer_config import build_component_transf
 class QFormerProjectorConfig:
     """Shape of ``QFormerProjector``.
 
-    The field names follow Hugging Face's ``Blip2QFormerConfig`` where one exists:
-    ``hidden_size``, ``num_layers`` (``num_hidden_layers``), ``num_attention_heads``,
-    ``ffn_hidden_size`` (``intermediate_size``), ``cross_attention_frequency`` and
-    ``layernorm_epsilon`` (``layer_norm_eps``). ``input_size`` is the encoder's output size
-    (``encoder_hidden_size``) and ``output_size`` the LLM's hidden size.
+    Fields that Hugging Face's ``Blip2QFormerConfig`` also has, with its names:
+
+    - ``input_size``: ``encoder_hidden_size`` (the encoder's output size)
+    - ``hidden_size``: ``hidden_size``
+    - ``num_layers``: ``num_hidden_layers``
+    - ``num_attention_heads``: ``num_attention_heads``
+    - ``ffn_hidden_size``: ``intermediate_size``
+    - ``cross_attention_frequency``: ``cross_attention_frequency``
+    - ``activation``: ``hidden_act``
+    - ``layernorm_epsilon``: ``layer_norm_eps``
+
+    ``output_size`` is the LLM's hidden size.
 
     Each utterance is cut into windows of ``window_size`` encoder frames, and ``num_queries``
     learned queries read each window. ``window_size=None`` makes the whole utterance one window,
