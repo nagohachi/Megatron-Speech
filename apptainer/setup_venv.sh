@@ -23,25 +23,20 @@ for patch in patches/*.patch; do
     fi
 done
 
+# uv is usually installed in ~/.local/bin, which is not on PATH inside the container.
+UV="$(type -P uv || echo "$HOME/.local/bin/uv")"
+if [[ ! -x "$UV" ]]; then
+    echo "error: uv not found; install it with 'curl -LsSf https://astral.sh/uv/install.sh | sh'" >&2
+    exit 1
+fi
+
 if [[ ! -d .venv ]]; then
-    /usr/bin/python3 -m venv --system-site-packages .venv
+    "$UV" venv --system-site-packages --python /usr/bin/python3 .venv
 fi
 source .venv/bin/activate
 
-# Pin the container's builds so the resolver never replaces them.
-python - > .venv/container-constraints.txt <<'PY'
-import importlib.metadata as md
-for name in ["torch", "transformer_engine", "flash_attn", "triton", "numpy", "apex"]:
-    try:
-        print(f"{name}=={md.version(name)}")
-    except md.PackageNotFoundError:
-        pass
-PY
-
-# pip (not uv) because pip accepts the container's torch, installed outside the venv,
-# as satisfying "torch" requirements of other packages.
-python -m pip install --quiet --upgrade pip
-python -m pip install --constraint .venv/container-constraints.txt -e ".[dev,logging]"
+# [tool.uv] exclude-dependencies in pyproject.toml keeps the container's torch and friends.
+"$UV" pip install -e ".[dev,logging]"
 
 # Megatron-LM is used from the submodule as is (megatron.core, megatron.training and
 # the top-level helpers such as megatron.rank_log_setup).

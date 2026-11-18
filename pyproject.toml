@@ -20,6 +20,9 @@ dependencies = [
 dev = ["pytest", "peft", "datasets"]
 logging = ["wandb", "tensorboard"]
 
+[tool.uv]
+exclude-dependencies = ["torch", "triton", "numpy", "transformer-engine", "flash-attn"]
+
 [tool.setuptools.packages.find]
 include = ["megatron_speech*"]
 
