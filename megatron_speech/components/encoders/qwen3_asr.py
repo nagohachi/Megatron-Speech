@@ -13,6 +13,17 @@ from megatron.core.transformer.transformer_block import TransformerBlock
 from megatron_speech.components.activations import ACTIVATIONS
 from megatron_speech.components.transformer_config import build_component_transformer_config
 
+# Qwen3-ASR has exactly three convolutions (conv2d1 to conv2d3, as Hugging Face names them), each
+# with kernel 3, stride 2 and padding 1; the released weights fix the count.
+NUM_CONVOLUTIONS = 3
+
+
+def calc_conv_output_length(length: int) -> int:
+    """Calculate how many of ``length`` time steps or frequency bins the convolutions leave."""
+    for _ in range(NUM_CONVOLUTIONS):
+        length = (length - 1) // 2 + 1 if length > 0 else 0
+    return length
+
 
 @dataclass
 class Qwen3ASREncoderConfig:
@@ -97,25 +108,16 @@ class Qwen3ASREncoderConfig:
 
         It is the number of channels times the number of frequency bins.
         """
-        num_frequency_bins = self.num_mel_bins
-        for _ in range(3):
-            num_frequency_bins = (num_frequency_bins - 1) // 2 + 1
-        return self.downsample_hidden_size * num_frequency_bins
+        return self.downsample_hidden_size * calc_conv_output_length(self.num_mel_bins)
 
     def calc_num_encoder_frames(self, num_mel_frames: int) -> int:
         """Count the encoder frames that an utterance of ``num_mel_frames`` mel frames gives.
 
-        Every chunk goes through three convolutions with kernel 3, stride 2 and padding 1.
+        Each chunk goes through the convolutions on its own.
         """
-
-        def calc_chunk_output_length(length: int) -> int:
-            for _ in range(3):
-                length = (length - 1) // 2 + 1 if length > 0 else 0
-            return length
-
         num_full_chunks, rest = divmod(num_mel_frames, self.mel_frames_per_chunk)
-        full_chunk_output_length = calc_chunk_output_length(self.mel_frames_per_chunk)
-        return num_full_chunks * full_chunk_output_length + calc_chunk_output_length(rest)
+        full_chunk_output_length = calc_conv_output_length(self.mel_frames_per_chunk)
+        return num_full_chunks * full_chunk_output_length + calc_conv_output_length(rest)
 
 
 @dataclass
@@ -187,12 +189,12 @@ class Qwen3ASREncoderInputs:
 class Qwen3ASREncoder(MegatronModule):
     """Qwen3-ASR audio encoder (the AuT encoder of Qwen3-Omni) without its projector.
 
-    Matches Hugging Face's ``Qwen3ASREncoder``. Each chunk goes through three convolutions
-    (Qwen3-ASR has exactly three) with GELU and a linear layer to ``hidden_size``, and a
-    sinusoidal embedding of the position within the chunk is added. The valid encoder frames
-    of all chunks then go through pre-LayerNorm transformer layers with bidirectional attention
-    within each window, and a final LayerNorm. The attention heads and MLPs are split over the
-    tensor parallel ranks; the convolutions are not split.
+    Matches Hugging Face's ``Qwen3ASREncoder``. Each chunk goes through ``NUM_CONVOLUTIONS``
+    convolutions with GELU and a linear layer to ``hidden_size``, and a sinusoidal embedding of
+    the position within the chunk is added. The valid encoder frames of all chunks then go
+    through pre-LayerNorm transformer layers with bidirectional attention within each window,
+    and a final LayerNorm. The attention heads and MLPs are split over the tensor parallel
+    ranks; the convolutions are not split.
 
     The layers are Megatron's ``TransformerBlock`` so that the attention over the windows runs
     in Transformer Engine's packed (THD) kernels instead of one call per window.
@@ -258,6 +260,7 @@ class Qwen3ASREncoder(MegatronModule):
         super().__init__(config=config)
         num_channels = encoder_config.downsample_hidden_size
         conv_kwargs = {"kernel_size": 3, "stride": 2, "padding": 1, "dtype": config.params_dtype}
+        # NUM_CONVOLUTIONS layers, one attribute each to keep Hugging Face's parameter names.
         self.conv2d1 = torch.nn.Conv2d(1, num_channels, **conv_kwargs)
         self.conv2d2 = torch.nn.Conv2d(num_channels, num_channels, **conv_kwargs)
         self.conv2d3 = torch.nn.Conv2d(num_channels, num_channels, **conv_kwargs)
