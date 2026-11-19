@@ -134,13 +134,10 @@ class Qwen3ASREncoderInputs:
 
         Windows start at the first encoder frame of each utterance and hold
         ``encoder_frames_per_window`` encoder frames; the last window of an utterance may be
-        shorter. A batch without frames has no encoder inputs: its audio inputs are None, and MIMO
-        then does not call the encoder.
+        shorter. A batch without frames has no encoder inputs and raises ValueError.
         """
         if not any(mel.shape[1] for mel in mels):
-            raise ValueError(
-                "no utterance has frames; give MIMO None as the audio inputs of such a batch"
-            )
+            raise ValueError("no utterance has frames")
         mel_frames_per_chunk = config.mel_frames_per_chunk
         chunks, encoder_frame_index, window_lengths = [], [], []
         for mel in mels:

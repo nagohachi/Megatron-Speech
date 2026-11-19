@@ -251,7 +251,7 @@ def test_chunks_hold_the_frames(
 
 @pytest.mark.parametrize("lengths", [[], [0, 0]], ids=["no-utterances", "empty-utterances"])
 def test_rejects_batch_without_frames(lengths: list[int]) -> None:
-    """Check that a batch without frames raises ValueError; MIMO skips the encoder for it."""
+    """Check that a batch without frames raises ValueError."""
     mels = [torch.zeros(ENCODER_CONFIG.num_mel_bins, n) for n in lengths]
     with pytest.raises(ValueError, match="no utterance has frames"):
         Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG)
