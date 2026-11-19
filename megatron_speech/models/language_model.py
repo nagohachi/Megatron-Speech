@@ -13,14 +13,7 @@ from megatron.core.transformer import TransformerConfig
 
 
 class SpeechLanguageModel(GPTModel):
-    """``GPTModel`` used as the LLM of the speech LLM.
-
-    Most positions of a speech recognition sequence are audio frames and prompt tokens, which
-    take no loss. ``GPTModel`` computes the logits of every position, ``[num_tokens,
-    vocab_size]``: 5.0 GB in fp32 for 8192 tokens and Qwen3's 151,936-token vocabulary. The
-    loss keeps ``GPTModel``'s ``[batch, sequence]`` shape, with 0 where ``loss_mask`` is 0, so a
-    loss function that weights it by ``loss_mask`` gives the same value.
-    """
+    """``GPTModel`` used as the LLM of the speech LLM."""
 
     def forward(
         self,
