@@ -213,3 +213,14 @@ def test_gradients_are_zero_without_targets(model: SpeechLanguageModel, batch: B
     for name, param in model.named_parameters():
         assert param.grad is not None, name
         assert torch.all(param.grad == 0), name
+
+
+def test_returns_gpt_model_loss_without_loss_mask(
+    model: SpeechLanguageModel, reference_loss: torch.Tensor, batch: Batch, dtype: torch.dtype
+) -> None:
+    """Check that with labels but without a loss mask the model returns ``GPTModel``'s loss."""
+    with torch.no_grad():
+        actual = model(batch.input_ids, batch.position_ids, None, labels=batch.labels)
+    error = calc_relative_error(actual, reference_loss)
+    logger.info("%s: loss without loss mask max relative error %.2e", dtype, error)
+    assert error < TOLERANCES[dtype]
