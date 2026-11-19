@@ -18,13 +18,6 @@ from megatron_speech.components.transformer_config import build_component_transf
 NUM_CONVOLUTIONS = 3
 
 
-def calc_conv_output_length(length: int) -> int:
-    """Calculate how many of ``length`` time steps or frequency bins the convolutions leave."""
-    for _ in range(NUM_CONVOLUTIONS):
-        length = (length - 1) // 2 + 1 if length > 0 else 0
-    return length
-
-
 @dataclass
 class Qwen3ASREncoderConfig:
     """Shape of ``Qwen3ASREncoder``; the defaults are those of the released Qwen3-ASR models.
@@ -107,7 +100,14 @@ class Qwen3ASREncoderConfig:
 
         It is the number of channels times the number of frequency bins.
         """
-        return self.downsample_hidden_size * calc_conv_output_length(self.num_mel_bins)
+        return self.downsample_hidden_size * self.calc_conv_output_length(self.num_mel_bins)
+
+    @staticmethod
+    def calc_conv_output_length(length: int) -> int:
+        """Calculate how many of ``length`` time steps or frequency bins the convolutions leave."""
+        for _ in range(NUM_CONVOLUTIONS):
+            length = (length - 1) // 2 + 1 if length > 0 else 0
+        return length
 
     def calc_num_encoder_frames(self, num_mel_frames: int) -> int:
         """Count the encoder frames that an utterance of ``num_mel_frames`` mel frames gives.
@@ -115,8 +115,8 @@ class Qwen3ASREncoderConfig:
         Each chunk goes through the convolutions on its own.
         """
         num_full_chunks, rest = divmod(num_mel_frames, self.mel_frames_per_chunk)
-        full_chunk_output_length = calc_conv_output_length(self.mel_frames_per_chunk)
-        return num_full_chunks * full_chunk_output_length + calc_conv_output_length(rest)
+        full_chunk_output_length = self.calc_conv_output_length(self.mel_frames_per_chunk)
+        return num_full_chunks * full_chunk_output_length + self.calc_conv_output_length(rest)
 
 
 @dataclass
