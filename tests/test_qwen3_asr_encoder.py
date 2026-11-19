@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 UTTERANCE_LENGTHS = [250, 0, 100, 37, 1]
 # Names of the convolutions and the linear layer after them, the same on both sides.
 CONVOLUTIONS = ("conv2d1", "conv2d2", "conv2d3", "conv_out")
-# Windows of 200 frames (26 tokens) so that the 250-frame utterance spans two of them.
+# Windows of 200 mel frames (26 encoder frames) so that the 250-frame utterance spans two.
 ENCODER_CONFIG = Qwen3ASREncoderConfig(
     num_mel_bins=32,
     hidden_size=64,
@@ -182,7 +182,7 @@ def copy_inputs_to_gpu(cpu_inputs: Qwen3ASREncoderInputs) -> Qwen3ASREncoderInpu
 
 @pytest.fixture(name="hf_window_bounds")
 def calc_hf_window_bounds() -> list[int]:
-    """Cumulative token counts of the attention windows that Hugging Face computes."""
+    """Cumulative encoder frame counts of the attention windows that Hugging Face computes."""
     mel_frames_per_chunk = ENCODER_CONFIG.mel_frames_per_chunk
     chunk_lengths = [
         min(mel_frames_per_chunk, n - start)
@@ -197,9 +197,9 @@ def calc_hf_window_bounds() -> list[int]:
     ).tolist()
 
 
-@pytest.fixture(name="hf_token_counts")
-def calc_hf_token_counts() -> list[int]:
-    """Encoder tokens per utterance by Hugging Face's length formula."""
+@pytest.fixture(name="hf_encoder_frame_counts")
+def calc_hf_encoder_frame_counts() -> list[int]:
+    """Encoder frames per utterance by Hugging Face's length formula."""
     lengths = torch.tensor(UTTERANCE_LENGTHS)
     return _get_feat_extract_output_lengths(lengths, ENCODER_CONFIG.n_window).tolist()
 
@@ -219,16 +219,17 @@ def test_longest_window_matches_hf(
     assert cpu_inputs.max_seqlen == longest_window_length
 
 
-def test_token_counts_match_hf(hf_token_counts: list[int]) -> None:
-    """calc_num_tokens agrees with Hugging Face's length formula for every utterance."""
-    assert [ENCODER_CONFIG.calc_num_tokens(n) for n in UTTERANCE_LENGTHS] == hf_token_counts
+def test_encoder_frame_counts_match_hf(hf_encoder_frame_counts: list[int]) -> None:
+    """calc_num_encoder_frames agrees with Hugging Face's length formula for every utterance."""
+    num_encoder_frames = [ENCODER_CONFIG.calc_num_encoder_frames(n) for n in UTTERANCE_LENGTHS]
+    assert num_encoder_frames == hf_encoder_frame_counts
 
 
-def test_token_index_selects_hf_token_count(
-    cpu_inputs: Qwen3ASREncoderInputs, hf_token_counts: list[int]
+def test_encoder_frame_index_selects_hf_count(
+    cpu_inputs: Qwen3ASREncoderInputs, hf_encoder_frame_counts: list[int]
 ) -> None:
-    """token_index keeps as many tokens as Hugging Face's encoder outputs."""
-    assert cpu_inputs.token_index.numel() == sum(hf_token_counts)
+    """encoder_frame_index keeps as many encoder frames as Hugging Face's encoder outputs."""
+    assert cpu_inputs.encoder_frame_index.numel() == sum(hf_encoder_frame_counts)
 
 
 def test_chunks_hold_the_frames(

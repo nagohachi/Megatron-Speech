@@ -149,8 +149,8 @@ def test_gradients_match_torch(
     assert max(errors.values()) < TOLERANCES[dtype], errors
 
 
-def test_accepts_zero_tokens(tensor_parallel_size: int) -> None:
-    """A batch without audio gives the projector no tokens."""
+def test_accepts_zero_frames(tensor_parallel_size: int) -> None:
+    """A batch without audio gives the projector no encoder frames."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,

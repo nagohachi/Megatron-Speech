@@ -27,7 +27,7 @@ class Qwen3ASREncoderConfig:
     - ``activation``: ``activation_function`` (the MLP activation; the convolutions use GELU)
 
     The encoder cuts the log-mel frames of an utterance into chunks of ``2 * n_window`` frames
-    and lets the tokens attend within windows of ``n_window_infer`` frames.
+    and lets the encoder frames attend within windows of ``n_window_infer`` mel frames.
     """
 
     num_mel_bins: int = 128
@@ -74,37 +74,40 @@ class Qwen3ASREncoderConfig:
         return 2 * self.n_window
 
     @property
-    def tokens_per_chunk(self) -> int:
-        """Tokens that the convolutions make from a full chunk (13 for 100 frames)."""
-        return self.calc_num_tokens(self.mel_frames_per_chunk)
+    def encoder_frames_per_chunk(self) -> int:
+        """Number of encoder frames from a full chunk (13 from 100 mel frames)."""
+        return self.calc_num_encoder_frames(self.mel_frames_per_chunk)
 
     @property
-    def tokens_per_window(self) -> int:
-        """Number of tokens in an attention window (104 for the released models)."""
-        return self.tokens_per_chunk * (self.n_window_infer // self.mel_frames_per_chunk)
+    def encoder_frames_per_window(self) -> int:
+        """Number of encoder frames in an attention window (104 for the released models)."""
+        return self.encoder_frames_per_chunk * (self.n_window_infer // self.mel_frames_per_chunk)
 
     @property
     def num_conv_out_features(self) -> int:
-        """Number of features of a token after the convolutions: channels times frequency bins."""
+        """Number of features of an encoder frame out of the convolutions.
+
+        It is the number of channels times the number of frequency bins.
+        """
         num_frequency_bins = self.num_mel_bins
         for _ in range(3):
             num_frequency_bins = (num_frequency_bins - 1) // 2 + 1
         return self.downsample_hidden_size * num_frequency_bins
 
-    def calc_num_tokens(self, num_frames: int) -> int:
-        """Encoder output tokens of an utterance of ``num_frames`` mel frames.
+    def calc_num_encoder_frames(self, num_mel_frames: int) -> int:
+        """Encoder frames of an utterance of ``num_mel_frames`` mel frames.
 
         Every chunk goes through three convolutions with kernel 3, stride 2 and padding 1.
         """
 
-        def calc_chunk_tokens(length: int) -> int:
+        def calc_chunk_output_length(length: int) -> int:
             for _ in range(3):
                 length = (length - 1) // 2 + 1 if length > 0 else 0
             return length
 
-        num_full_chunks, rest = divmod(num_frames, self.mel_frames_per_chunk)
-        num_full_chunk_tokens = num_full_chunks * calc_chunk_tokens(self.mel_frames_per_chunk)
-        return num_full_chunk_tokens + calc_chunk_tokens(rest)
+        num_full_chunks, rest = divmod(num_mel_frames, self.mel_frames_per_chunk)
+        full_chunk_output_length = calc_chunk_output_length(self.mel_frames_per_chunk)
+        return num_full_chunks * full_chunk_output_length + calc_chunk_output_length(rest)
 
 
 @dataclass
@@ -113,14 +116,15 @@ class Qwen3ASREncoderInputs:
 
     - ``input_features``: ``[num_chunks, num_mel_bins, mel_frames_per_chunk]`` log-mel chunks
       of all utterances, utterance by utterance, zero past the frames of each chunk
-    - ``token_index``: ``[num_tokens]`` positions of the valid tokens in the
-      ``[num_chunks * tokens_per_chunk]`` grid of convolution outputs
-    - ``cu_seqlens``: ``[num_windows + 1]`` int32 cumulative token counts of the attention windows
-    - ``max_seqlen``: tokens in the longest attention window
+    - ``encoder_frame_index``: ``[num_encoder_frames]`` positions of the valid encoder frames
+      in the ``[num_chunks * encoder_frames_per_chunk]`` grid of convolution outputs
+    - ``cu_seqlens``: ``[num_windows + 1]`` int32 cumulative encoder frame counts of the
+      attention windows
+    - ``max_seqlen``: encoder frames in the longest attention window
     """
 
     input_features: torch.Tensor
-    token_index: torch.Tensor
+    encoder_frame_index: torch.Tensor
     cu_seqlens: torch.Tensor
     max_seqlen: int
 
@@ -128,36 +132,39 @@ class Qwen3ASREncoderInputs:
     def build(cls, mels: list[torch.Tensor], config: Qwen3ASREncoderConfig) -> Self:
         """Cut ``[num_mel_bins, num_frames]`` log-mels into chunks and attention windows.
 
-        Windows start at the first token of each utterance and hold ``tokens_per_window``
-        tokens; the last window of an utterance may be shorter. A batch without frames has no
-        encoder inputs: its audio inputs are None, and MIMO then does not call the encoder.
+        Windows start at the first encoder frame of each utterance and hold
+        ``encoder_frames_per_window`` encoder frames; the last window of an utterance may be
+        shorter. A batch without frames has no encoder inputs: its audio inputs are None, and MIMO
+        then does not call the encoder.
         """
         if not any(mel.shape[1] for mel in mels):
             raise ValueError(
                 "no utterance has frames; give MIMO None as the audio inputs of such a batch"
             )
         mel_frames_per_chunk = config.mel_frames_per_chunk
-        chunks, token_index, window_lengths = [], [], []
+        chunks, encoder_frame_index, window_lengths = [], [], []
         for mel in mels:
             for start in range(0, mel.shape[1], mel_frames_per_chunk):
                 piece = mel[:, start : start + mel_frames_per_chunk]
-                grid_offset = len(chunks) * config.tokens_per_chunk
-                num_tokens = config.calc_num_tokens(piece.shape[1])
-                token_index.append(torch.arange(grid_offset, grid_offset + num_tokens))
+                grid_offset = len(chunks) * config.encoder_frames_per_chunk
+                num_encoder_frames = config.calc_num_encoder_frames(piece.shape[1])
+                encoder_frame_index.append(
+                    torch.arange(grid_offset, grid_offset + num_encoder_frames)
+                )
                 chunks.append(
                     torch.nn.functional.pad(piece, (0, mel_frames_per_chunk - piece.shape[1]))
                 )
             num_full_windows, rest = divmod(
-                config.calc_num_tokens(mel.shape[1]), config.tokens_per_window
+                config.calc_num_encoder_frames(mel.shape[1]), config.encoder_frames_per_window
             )
-            window_lengths += [config.tokens_per_window] * num_full_windows
+            window_lengths += [config.encoder_frames_per_window] * num_full_windows
             if rest:
                 window_lengths.append(rest)
         cu_seqlens = torch.zeros(len(window_lengths) + 1, dtype=torch.int32)
         cu_seqlens[1:] = torch.cumsum(torch.tensor(window_lengths), dim=0)
         return cls(
             input_features=torch.stack(chunks),
-            token_index=torch.cat(token_index),
+            encoder_frame_index=torch.cat(encoder_frame_index),
             cu_seqlens=cu_seqlens,
             max_seqlen=max(window_lengths),
         )
@@ -167,7 +174,7 @@ class Qwen3ASREncoderInputs:
         return replace(
             self,
             input_features=self.input_features.to(device),
-            token_index=self.token_index.to(device),
+            encoder_frame_index=self.encoder_frame_index.to(device),
             cu_seqlens=self.cu_seqlens.to(device),
         )
 
@@ -177,8 +184,8 @@ class Qwen3ASREncoder(MegatronModule):
 
     Matches Hugging Face's ``Qwen3ASREncoder``. Each chunk goes through three convolutions
     (Qwen3-ASR has exactly three) with GELU and a linear layer to ``hidden_size``, and a
-    sinusoidal embedding of the position within the chunk is added. The valid tokens of all
-    chunks then go through pre-LayerNorm transformer layers with bidirectional attention
+    sinusoidal embedding of the position within the chunk is added. The valid encoder frames
+    of all chunks then go through pre-LayerNorm transformer layers with bidirectional attention
     within each window, and a final LayerNorm. The attention heads and MLPs are split over the
     tensor parallel ranks; the convolutions are not split.
 
@@ -210,11 +217,15 @@ class Qwen3ASREncoder(MegatronModule):
                     )
 
         def build_position_embedding() -> torch.Tensor:
-            """Sinusoidal ``[tokens_per_chunk, hidden_size]`` embedding, as Hugging Face's."""
+            """Build the sinusoidal position embedding that Hugging Face's encoder adds.
+
+            The embedding is ``[encoder_frames_per_chunk, hidden_size]``.
+            """
             num_channels = encoder_config.hidden_size
             log_timescale_increment = np.log(10000.0) / (num_channels // 2 - 1)
             inv_timescales = torch.exp(-log_timescale_increment * torch.arange(num_channels // 2))
-            scaled_time = torch.arange(encoder_config.tokens_per_chunk)[:, None] * inv_timescales
+            positions = torch.arange(encoder_config.encoder_frames_per_chunk)
+            scaled_time = positions[:, None] * inv_timescales
             return torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
 
         def build_transformer_config() -> TransformerConfig:
@@ -266,13 +277,13 @@ class Qwen3ASREncoder(MegatronModule):
     def forward(
         self,
         input_features: torch.Tensor,
-        token_index: torch.Tensor,
+        encoder_frame_index: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
     ) -> torch.Tensor:
         """Encode the utterances that ``Qwen3ASREncoderInputs`` describes.
 
-        Returns ``[num_tokens, hidden_size]``, utterance by utterance.
+        Returns ``[num_encoder_frames, hidden_size]``, utterance by utterance.
         """
         hidden = input_features.unsqueeze(1).to(self.conv2d1.weight.dtype)
         for conv in (self.conv2d1, self.conv2d2, self.conv2d3):
@@ -285,8 +296,10 @@ class Qwen3ASREncoder(MegatronModule):
             )
         )
         hidden = hidden + self.position_embedding[:num_steps].to(hidden.dtype)
-        # Keep the valid tokens: [num_tokens, 1, hidden_size] in Megatron's [sequence, batch].
-        hidden = hidden.reshape(-1, hidden.shape[-1]).index_select(0, token_index).unsqueeze(1)
+        # Keep the valid encoder frames: [num_encoder_frames, 1, hidden_size] in Megatron's
+        # [sequence, batch].
+        hidden = hidden.reshape(-1, hidden.shape[-1]).index_select(0, encoder_frame_index)
+        hidden = hidden.unsqueeze(1)
         packed_seq_params = PackedSeqParams(
             qkv_format="thd",
             cu_seqlens_q=cu_seqlens,

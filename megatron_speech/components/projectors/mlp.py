@@ -28,7 +28,7 @@ class MLPProjectorConfig:
 
 
 class MLPProjector(MegatronModule):
-    """Linear layers with biases and an activation between them, on ``[num_tokens, input_size]``.
+    """Linear layers with biases and an activation between them, on ``[num_frames, input_size]``.
 
     Layers alternate between splitting their output features (column parallel) and their input
     features (row parallel) across the tensor parallel ranks, so the activation after a
@@ -117,7 +117,7 @@ class MLPProjector(MegatronModule):
         )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Project ``[num_tokens, input_size]`` to ``[num_tokens, output_size]``."""
+        """Project ``[num_frames, input_size]`` encoder frames to ``[num_frames, output_size]``."""
         for index, layer in enumerate(self.layers):
             hidden_states, _ = layer(hidden_states)
             if index < len(self.layers) - 1:
