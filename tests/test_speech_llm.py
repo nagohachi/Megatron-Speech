@@ -166,10 +166,11 @@ def calc_mimo_loss(model: MimoModel, batch: Batch) -> torch.Tensor:
     return loss
 
 
-def run_reference(model: MimoModel, batch: Batch) -> torch.Tensor:
-    """Run the modules of ``model`` one by one: encoder, projector, then LLM.
+def merge_reference_llm_input(model: MimoModel, batch: Batch) -> torch.Tensor:
+    """Merge the word embeddings and the projected frames into the LLM's input.
 
-    The projected encoder frames replace the LLM's embeddings of the audio tokens, in order.
+    The input is ``[num_tokens, 1, hidden]``. The projected encoder frames replace the LLM's
+    embeddings of the audio tokens, in order.
     The LLM's rotary positions add nothing to the word embeddings.
     """
     # The word embeddings are split over the TP ranks along the vocabulary.
@@ -182,11 +183,16 @@ def run_reference(model: MimoModel, batch: Batch) -> torch.Tensor:
         frames = audio.encoders[ENCODER_NAME](**list_encoder_kwargs(batch.encoder_inputs))
         is_audio = (batch.input_ids == AUDIO_TOKEN_ID).transpose(0, 1)
         decoder_input[is_audio] = audio.input_projections[0](frames).to(decoder_input.dtype)
+    return decoder_input
+
+
+def run_reference(model: MimoModel, batch: Batch) -> torch.Tensor:
+    """Run the modules of ``model`` one by one: encoder, projector, then LLM."""
     return model.language_model(
         None,
         batch.position_ids,
         None,
-        decoder_input=decoder_input,
+        decoder_input=merge_reference_llm_input(model, batch),
         labels=batch.labels,
         loss_mask=batch.loss_mask,
         packed_seq_params=PackedSeqParams(
@@ -197,6 +203,40 @@ def run_reference(model: MimoModel, batch: Batch) -> torch.Tensor:
             max_seqlen_kv=batch.max_seqlen,
         ),
     )
+
+
+def capture_llm_input(model: MimoModel, batch: Batch) -> torch.Tensor:
+    """Run the speech LLM under test and return the embeddings that it passes to the LLM."""
+    captured = {}
+
+    def save_llm_input(
+        module: torch.nn.Module,
+        args: tuple[torch.Tensor | None, ...],
+        kwargs: dict[str, torch.Tensor | None],
+    ) -> None:
+        """Keep the ``decoder_input`` that ``MimoModel`` passes to the LLM."""
+        captured["decoder_input"] = kwargs["decoder_input"]
+
+    handle = model.language_model.register_forward_pre_hook(save_llm_input, with_kwargs=True)
+    try:
+        calc_mimo_loss(model, batch)
+    finally:
+        handle.remove()
+    return captured["decoder_input"]
+
+
+@pytest.fixture(name="model_llm_input")
+def calc_model_llm_input(model: MimoModel, batch: Batch) -> torch.Tensor:
+    """Calculate the LLM's input in the speech LLM under test, without gradients."""
+    with torch.no_grad():
+        return capture_llm_input(model, batch)
+
+
+@pytest.fixture(name="reference_llm_input")
+def calc_reference_llm_input(model: MimoModel, batch: Batch) -> torch.Tensor:
+    """Calculate the LLM's input of the module-by-module reference, without gradients."""
+    with torch.no_grad():
+        return merge_reference_llm_input(model, batch)
 
 
 @pytest.fixture(name="model_loss")
@@ -224,6 +264,16 @@ def test_parameter_names_follow_module_tree(model: MimoModel) -> None:
         assert any(name.startswith(prefix) for prefix in prefixes), name
     for prefix in prefixes:
         assert any(name.startswith(prefix) for name, _ in model.named_parameters()), prefix
+
+
+def test_llm_input_matches_reference(
+    model_llm_input: torch.Tensor, reference_llm_input: torch.Tensor, dtype: torch.dtype
+) -> None:
+    """Check that the LLM's input holds the projected frames at the audio tokens, in order."""
+    assert model_llm_input.shape == reference_llm_input.shape
+    error = calc_relative_error(model_llm_input, reference_llm_input)
+    logger.info("%s: LLM input max relative error %.2e", dtype, error)
+    assert error < TOLERANCES[dtype]
 
 
 def test_loss_matches_reference(
