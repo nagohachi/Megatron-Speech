@@ -94,3 +94,15 @@ def test_log_mel_matches_hf_on_cpu(
 def test_no_waveforms_give_no_log_mels() -> None:
     """Check that a micro-batch without audio gives an empty list."""
     assert Qwen3ASRLogMel(CONFIG).cuda()([]) == []
+
+
+@pytest.mark.parametrize(
+    "invalid_settings",
+    [{"hop_length": 0}, {"n_fft": 0}, {"min_length": 200}],
+    ids=["hop_length", "n_fft", "min_length-within-reflection"],
+)
+def test_invalid_config_names_the_setting(invalid_settings: dict[str, int]) -> None:
+    """Check that an invalid config fails when it is built, naming the setting."""
+    (setting_name,) = invalid_settings
+    with pytest.raises(ValueError, match=setting_name):
+        Qwen3ASRLogMelConfig(**invalid_settings)

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import torch
 from transformers.audio_utils import mel_filter_bank
@@ -20,6 +20,18 @@ class Qwen3ASRLogMelConfig:
     n_fft: int = 400
     hop_length: int = 160
     min_length: int = 8000
+
+    def __post_init__(self) -> None:
+        """Check that every setting is positive and that the STFT can run on ``min_length``."""
+        for field in fields(self):
+            if getattr(self, field.name) <= 0:
+                raise ValueError(f"{field.name} must be positive, got {getattr(self, field.name)}")
+        if self.min_length <= self.n_fft // 2:
+            raise ValueError(
+                f"min_length ({self.min_length}) must be larger than n_fft // 2 "
+                f"({self.n_fft // 2}): the centered STFT reflects n_fft // 2 samples at each end "
+                "of the audio"
+            )
 
     def calc_num_frames(self, num_samples: int) -> int:
         """Count the log-mel frames of ``num_samples`` samples, as Hugging Face does.
