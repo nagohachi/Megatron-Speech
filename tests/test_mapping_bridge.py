@@ -42,7 +42,7 @@ def build_hf_checkpoint(tmp_path: Path, tensor_parallel_size: int) -> Path:
     """Save a Qwen3 with random weights as a Hugging Face checkpoint that every rank reads.
 
     Under torch.distributed, ``save_pretrained`` writes only on rank 0, so every rank takes
-    rank 0's directory.
+    rank 0's directory. ``tensor_parallel_size`` makes torch.distributed start first.
     """
     paths = [tmp_path]
     torch.distributed.broadcast_object_list(paths, src=0)
