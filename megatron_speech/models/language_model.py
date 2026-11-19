@@ -70,22 +70,22 @@ class SpeechLanguageModel(GPTModel):
                 hidden_states = gather_from_sequence_parallel_region(
                     hidden_states, tensor_parallel_output_grad=False, group=output_layer.tp_group
                 )
-            target_mask = loss_mask.transpose(0, 1).bool()  # [sequence, batch], as hidden_states
+            # (sequence, batch) indices of the targets, in the layout of hidden_states. Indexing
+            # with a boolean mask instead would run nonzero again for each tensor.
+            target_indices = loss_mask.transpose(0, 1).nonzero(as_tuple=True)
             output_layer.sequence_parallel = False
             try:
                 logits, _ = output_layer(
-                    hidden_states[target_mask].unsqueeze(1),
+                    hidden_states[target_indices].unsqueeze(1),
                     weight=output_weight,
                     runtime_gather_output=runtime_gather_output,
                 )
             finally:
                 output_layer.sequence_parallel = sequence_parallel
-            target_labels = labels.transpose(0, 1)[target_mask].unsqueeze(0)
+            target_labels = labels.transpose(0, 1)[target_indices].unsqueeze(0)
             target_loss = compute_language_model_loss(target_labels, scale_logits(logits))
-            # masked_scatter puts the losses back in the order in which hidden_states[target_mask]
-            # took the positions.
-            loss = target_loss.new_zeros(target_mask.shape).masked_scatter(target_mask, target_loss)
-            return loss.transpose(0, 1).contiguous()
+            loss = target_loss.new_zeros(hidden_states.shape[:2])
+            return loss.index_put(target_indices, target_loss[0]).transpose(0, 1).contiguous()
 
         return super().forward(
             input_ids,
