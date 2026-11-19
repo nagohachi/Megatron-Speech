@@ -139,5 +139,5 @@ def test_export_restores_hf_weights(
     if torch.distributed.get_rank() == 0:
         assert exported.keys() == set(hf_pretrained.state.keys())
         for name, tensor in exported.items():
-            expected = hf_pretrained.state[name].to(dtype).to(tensor.dtype)
-            assert torch.equal(tensor, expected), name
+            assert tensor.dtype == dtype, name
+            assert torch.equal(tensor, hf_pretrained.state[name].to(dtype)), name
