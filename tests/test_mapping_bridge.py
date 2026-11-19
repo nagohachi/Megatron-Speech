@@ -29,6 +29,8 @@ HF_CONFIG = Qwen3Config(
     tie_word_embeddings=True,
 )
 SEQUENCE_LENGTH = 16
+# Megatron-Bridge's mapping table of Qwen3.
+BRIDGE = MappingBridge(Qwen3Bridge().mapping_registry().get_all_mappings())
 
 
 @pytest.fixture(name="hf_dir")
@@ -52,16 +54,8 @@ def build_hf_checkpoint(tmp_path: Path, tensor_parallel_size: int) -> Path:
     return paths[0]
 
 
-@pytest.fixture(name="bridge")
-def build_bridge() -> MappingBridge:
-    """Build a bridge with Megatron-Bridge's mapping table of Qwen3."""
-    return MappingBridge(Qwen3Bridge().mapping_registry().get_all_mappings())
-
-
 @pytest.fixture(name="model")
-def build_model(
-    hf_dir: Path, bridge: MappingBridge, dtype: torch.dtype, tensor_parallel_size: int
-) -> SpeechLanguageModel:
+def build_model(hf_dir: Path, dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLanguageModel:
     """Build a SpeechLanguageModel of the reference's shape and load the Hugging Face weights."""
     config = TransformerConfig(
         num_layers=HF_CONFIG.num_hidden_layers,
@@ -92,7 +86,7 @@ def build_model(
         rotary_base=HF_CONFIG.rope_parameters["rope_theta"],
         share_embeddings_and_output_weights=HF_CONFIG.tie_word_embeddings,
     ).cuda()
-    bridge.load_weights_hf_to_megatron(PreTrainedCausalLM.from_pretrained(hf_dir), [model])
+    BRIDGE.load_weights_hf_to_megatron(PreTrainedCausalLM.from_pretrained(hf_dir), [model])
     return model
 
 
@@ -112,7 +106,7 @@ def test_logits_match_hf(model: SpeechLanguageModel, hf_dir: Path, dtype: torch.
 
 
 def test_export_restores_hf_weights(
-    model: SpeechLanguageModel, bridge: MappingBridge, hf_dir: Path, dtype: torch.dtype
+    model: SpeechLanguageModel, hf_dir: Path, dtype: torch.dtype
 ) -> None:
     """Check that writing the loaded weights back gives every Hugging Face weight exactly.
 
@@ -121,7 +115,7 @@ def test_export_restores_hf_weights(
     """
     hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_dir)
     exported = dict(
-        bridge.stream_weights_megatron_to_hf([model], hf_pretrained, show_progress=False)
+        BRIDGE.stream_weights_megatron_to_hf([model], hf_pretrained, show_progress=False)
     )
     if torch.distributed.get_rank() == 0:
         assert exported.keys() == set(hf_pretrained.state.keys())
