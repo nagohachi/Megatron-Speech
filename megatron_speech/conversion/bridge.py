@@ -4,12 +4,14 @@ from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
 
 
 class MappingBridge(MegatronModelBridge):
-    """Megatron-Bridge's weight conversion, driven by a mapping table that the caller gives.
+    """Megatron-Bridge's weight conversion with a mapping table that the caller gives.
 
-    The base class's ``load_weights_hf_to_megatron`` and ``stream_weights_megatron_to_hf``
-    read Hugging Face weights into a model that Megatron-Speech builds, and write them back.
-    Each mapping relates Megatron parameter names (``*`` matches a layer number) to Hugging
-    Face weight names, and splits the weights over the tensor parallel ranks.
+    - Table: each mapping relates Megatron parameter names to Hugging Face weight names
+      (``*`` matches a layer number).
+    - Loading: the base class's ``load_weights_hf_to_megatron`` reads Hugging Face weights
+      into a model that Megatron-Speech builds.
+    - Writing back: the base class's ``stream_weights_megatron_to_hf``.
+    - Tensor parallelism: the mappings split the weights over the ranks and gather them back.
     """
 
     def __init__(self, mappings: list[MegatronParamMapping]) -> None:
