@@ -9,7 +9,8 @@ from megatron.core.transformer import TransformerConfig
 
 from megatron_speech.components.activations import ACTIVATIONS
 from megatron_speech.components.projectors.mlp import MLPProjector, MLPProjectorConfig
-from tests.numerical_error import TOLERANCES, calc_relative_error, take_shard
+from tests.numerical_error import TOLERANCES, calc_relative_error
+from tests.tensor_parallel_shard import take_shard
 
 pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)

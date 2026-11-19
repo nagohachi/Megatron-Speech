@@ -21,7 +21,8 @@ from megatron_speech.components.encoders.qwen3_asr import (
     Qwen3ASREncoderConfig,
     Qwen3ASREncoderInputs,
 )
-from tests.numerical_error import TOLERANCES, calc_relative_error, take_shard
+from tests.numerical_error import TOLERANCES, calc_relative_error
+from tests.tensor_parallel_shard import take_shard
 
 logger = logging.getLogger(__name__)
 
