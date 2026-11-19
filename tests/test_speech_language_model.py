@@ -90,25 +90,25 @@ def build_model(
     return model
 
 
-@pytest.fixture(name="targets", params=["some", "all"])
-def get_targets(request: pytest.FixtureRequest) -> str:
+@pytest.fixture(name="target_pattern", params=["some", "all"])
+def get_target_pattern(request: pytest.FixtureRequest) -> str:
     """Return which positions of the batch are targets: ``some`` of them or ``all``."""
     return request.param
 
 
 @pytest.fixture(name="batch")
-def build_batch(targets: str) -> Batch:
-    """Build a batch whose target positions ``targets`` names.
+def build_batch(target_pattern: str) -> Batch:
+    """Build a batch whose target positions ``target_pattern`` names.
 
     ``some`` puts the targets of the first sequence at 10 to 15 and of the second at 3 to 5,
     ``all`` makes every position a target, and ``none`` no position.
     """
     torch.manual_seed(1)
     loss_mask = torch.zeros(BATCH_SIZE, SEQUENCE_LENGTH, device="cuda")
-    if targets == "some":
+    if target_pattern == "some":
         loss_mask[0, 10:] = 1
         loss_mask[1, 3:6] = 1
-    elif targets == "all":
+    elif target_pattern == "all":
         loss_mask[:] = 1
     return Batch(
         input_ids=torch.randint(VOCAB_SIZE, (BATCH_SIZE, SEQUENCE_LENGTH), device="cuda"),
@@ -157,8 +157,8 @@ def test_loss_matches_gpt_model_at_targets(
     model_loss: torch.Tensor, reference_loss: torch.Tensor, batch: Batch, dtype: torch.dtype
 ) -> None:
     """Check that the loss at the target positions equals ``GPTModel``'s."""
-    targets = batch.loss_mask.bool()
-    error = calc_relative_error(model_loss[targets], reference_loss[targets])
+    target_mask = batch.loss_mask.bool()
+    error = calc_relative_error(model_loss[target_mask], reference_loss[target_mask])
     logger.info("%s: loss max relative error %.2e", dtype, error)
     assert error < TOLERANCES[dtype]
 
@@ -200,13 +200,13 @@ def test_returns_logits_without_labels(
     assert error < TOLERANCES[dtype]
 
 
-@pytest.mark.parametrize("targets", ["none"])
+@pytest.mark.parametrize("target_pattern", ["none"])
 def test_loss_is_zero_without_targets(model_loss: torch.Tensor) -> None:
     """Check that a batch without target positions gives a loss of 0 at every position."""
     assert torch.all(model_loss == 0)
 
 
-@pytest.mark.parametrize("targets", ["none"])
+@pytest.mark.parametrize("target_pattern", ["none"])
 def test_gradients_are_zero_without_targets(model: SpeechLanguageModel, batch: Batch) -> None:
     """Check that a batch without target positions gives every parameter a gradient of 0."""
     (run_model(model, batch) * batch.loss_mask).sum().backward()
