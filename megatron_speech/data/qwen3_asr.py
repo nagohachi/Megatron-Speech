@@ -34,6 +34,8 @@ class Qwen3ASRExampleBuilder:
     - Target: the assistant's answer, ``language <language><asr_text><transcript><|im_end|>``.
       With ``force_language``, ``language <language><asr_text>`` moves into the prompt, as
       Hugging Face writes it to force the language, and the target is the rest.
+      ``<asr_text>`` and ``<|im_end|>`` are given as token ids, and the transcript is tokenized
+      as plain text, so that a transcript containing such a token's text keeps it as text.
     """
 
     def __init__(
@@ -64,6 +66,13 @@ class Qwen3ASRExampleBuilder:
         self.prompt_ids_after_audio = self.tokenizer(
             after_audio, add_special_tokens=False
         ).input_ids
+        self.answer_ids_before_transcript = []
+        if not force_language:
+            self.answer_ids_before_transcript = [
+                *self.tokenizer(f"language {language}", add_special_tokens=False).input_ids,
+                self.tokenizer.convert_tokens_to_ids("<asr_text>"),
+            ]
+        self.end_of_turn_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
 
     def build(self, waveform: np.ndarray, transcript: str) -> SpeechExample:
         """Build the example of ``waveform``, sampled at the feature extractor's rate."""
@@ -76,10 +85,10 @@ class Qwen3ASRExampleBuilder:
             *[self.audio_token_id] * num_audio_tokens,
             *self.prompt_ids_after_audio,
         ]
-        target = f"{transcript}<|im_end|>"
-        if not self.force_language:
-            target = f"language {self.language}<asr_text>{target}"
-        target_ids = self.tokenizer(target, add_special_tokens=False).input_ids
+        transcript_ids = self.tokenizer(
+            transcript, add_special_tokens=False, split_special_tokens=True
+        ).input_ids
+        target_ids = [*self.answer_ids_before_transcript, *transcript_ids, self.end_of_turn_id]
         return SpeechExample(
             waveform=torch.from_numpy(np.asarray(waveform, dtype=np.float32)),
             input_ids=torch.tensor(prompt_ids + target_ids),

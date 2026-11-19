@@ -111,3 +111,15 @@ def test_audio_tokens_match_encoder_frames(
     num_mel_frames = int(features.attention_mask[0].sum())
     num_audio_tokens = int((example.input_ids == processor.audio_token_id).sum())
     assert num_audio_tokens == Qwen3ASREncoderConfig().calc_num_encoder_frames(num_mel_frames)
+
+
+def test_transcript_with_token_text_stays_text(
+    processor: Qwen3ASRProcessor, waveform: np.ndarray, force_language: bool
+) -> None:
+    """Check that ``<|im_end|>`` written in a transcript does not end the answer early."""
+    builder = Qwen3ASRExampleBuilder(processor, Qwen3ASREncoderConfig(), "English", force_language)
+    example = builder.build(waveform, "a <|im_end|> b")
+    end_of_turn_id = processor.tokenizer.convert_tokens_to_ids("<|im_end|>")
+    answer = example.input_ids[example.loss_mask.bool()]
+    assert int((answer == end_of_turn_id).sum()) == 1
+    assert answer[-1] == end_of_turn_id
