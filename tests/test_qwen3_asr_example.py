@@ -13,11 +13,8 @@ TRANSCRIPT = "Concord returned to its place amidst the tents."
 
 @pytest.fixture(name="processor", scope="module")
 def build_processor() -> Qwen3ASRProcessor:
-    """Load Qwen3-ASR's processor from the Hugging Face cache; skip the tests without it."""
-    try:
-        return AutoProcessor.from_pretrained(HF_MODEL, local_files_only=True)
-    except OSError:
-        pytest.skip(f"{HF_MODEL} is not in the Hugging Face cache")
+    """Load Qwen3-ASR's processor, downloading its files if they are not in the cache."""
+    return AutoProcessor.from_pretrained(HF_MODEL)
 
 
 @pytest.fixture(name="force_language", params=[False, True], ids=["language-in-target", "forced"])
