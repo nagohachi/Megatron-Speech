@@ -4,6 +4,7 @@ import torch
 from transformers import AutoProcessor, Qwen3ASRProcessor
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
+from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
 from megatron_speech.data.qwen3_asr import Qwen3ASRExampleBuilder, SpeechExample
 
 HF_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
@@ -49,7 +50,9 @@ def build_example(
     processor: Qwen3ASRProcessor, waveform: np.ndarray, transcript: str, force_language: bool
 ) -> SpeechExample:
     """Build the example of the waveform with the transcript in English."""
-    builder = Qwen3ASRExampleBuilder(processor, Qwen3ASREncoderConfig(), "English", force_language)
+    builder = Qwen3ASRExampleBuilder(
+        processor, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", force_language
+    )
     return builder.build(waveform, transcript)
 
 
@@ -113,7 +116,9 @@ def test_transcript_with_token_text_stays_text(
     processor: Qwen3ASRProcessor, waveform: np.ndarray, force_language: bool
 ) -> None:
     """Check that ``<|im_end|>`` written in a transcript does not end the answer early."""
-    builder = Qwen3ASRExampleBuilder(processor, Qwen3ASREncoderConfig(), "English", force_language)
+    builder = Qwen3ASRExampleBuilder(
+        processor, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", force_language
+    )
     example = builder.build(waveform, "a <|im_end|> b")
     end_of_turn_id = processor.tokenizer.convert_tokens_to_ids("<|im_end|>")
     answer = example.input_ids[example.loss_mask.bool()]
