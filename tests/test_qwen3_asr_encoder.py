@@ -41,10 +41,8 @@ ENCODER_CONFIG = Qwen3ASREncoderConfig(
     num_attention_heads=4,
     ffn_hidden_size=128,
     downsample_hidden_size=16,
-    mel_frames_per_window=200,
+    n_window_infer=200,
 )
-# Hugging Face's n_window, which is half a chunk.
-HF_N_WINDOW = ENCODER_CONFIG.mel_frames_per_chunk // 2
 
 
 def map_hf_tensors(hf_tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -113,8 +111,8 @@ def build_reference() -> HFEncoder:
         encoder_attention_heads=ENCODER_CONFIG.num_attention_heads,
         encoder_ffn_dim=ENCODER_CONFIG.ffn_hidden_size,
         downsample_hidden_size=ENCODER_CONFIG.downsample_hidden_size,
-        n_window=HF_N_WINDOW,
-        n_window_infer=ENCODER_CONFIG.mel_frames_per_window,
+        n_window=ENCODER_CONFIG.n_window,
+        n_window_infer=ENCODER_CONFIG.n_window_infer,
     )
     hf_config._attn_implementation = "eager"
     reference = HFEncoder(hf_config).cuda()
@@ -198,8 +196,8 @@ def calc_hf_window_bounds(mels: list[torch.Tensor]) -> list[int]:
     return get_audio_cu_seqlens(
         torch.tensor(chunk_lengths),
         torch.tensor(lengths),
-        ENCODER_CONFIG.mel_frames_per_window,
-        HF_N_WINDOW,
+        ENCODER_CONFIG.n_window_infer,
+        ENCODER_CONFIG.n_window,
     ).tolist()
 
 
@@ -207,7 +205,7 @@ def calc_hf_window_bounds(mels: list[torch.Tensor]) -> list[int]:
 def calc_hf_encoder_frame_counts(mels: list[torch.Tensor]) -> list[int]:
     """Calculate the encoder frames of each utterance with Hugging Face's length formula."""
     lengths = torch.tensor([mel.shape[1] for mel in mels])
-    return _get_feat_extract_output_lengths(lengths, HF_N_WINDOW).tolist()
+    return _get_feat_extract_output_lengths(lengths, ENCODER_CONFIG.n_window).tolist()
 
 
 def test_window_bounds_match_hf(
@@ -339,15 +337,15 @@ class InvalidConfig:
                 "num_attention_heads",
                 "ffn_hidden_size",
                 "downsample_hidden_size",
-                "mel_frames_per_chunk",
+                "n_window",
             )
         ],
         pytest.param(
-            InvalidConfig({"mel_frames_per_window": 150}, "mel_frames_per_window=150 must be"),
+            InvalidConfig({"n_window_infer": 150}, "n_window_infer=150 must be a positive"),
             id="window-not-multiple-of-chunk",
         ),
         pytest.param(
-            InvalidConfig({"mel_frames_per_window": 0}, "mel_frames_per_window=0 must be"),
+            InvalidConfig({"n_window_infer": 0}, "n_window_infer=0 must be a positive"),
             id="no-window",
         ),
         pytest.param(

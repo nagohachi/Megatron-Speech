@@ -29,12 +29,9 @@ class Qwen3ASREncoderConfig:
     - ``num_attention_heads``: ``encoder_attention_heads``
     - ``ffn_hidden_size``: ``encoder_ffn_dim``
     - ``activation``: ``activation_function`` (the MLP activation; the convolutions use GELU)
-    - ``mel_frames_per_chunk``: ``2 * n_window``
-    - ``mel_frames_per_window``: ``n_window_infer``
 
-    The encoder cuts the log-mel frames of an utterance into chunks of ``mel_frames_per_chunk``
-    frames and lets the encoder frames attend within windows of ``mel_frames_per_window`` mel
-    frames.
+    The encoder cuts the log-mel frames of an utterance into chunks of ``2 * n_window`` frames
+    and lets the encoder frames attend within windows of ``n_window_infer`` mel frames.
     """
 
     num_mel_bins: int = 128
@@ -43,8 +40,8 @@ class Qwen3ASREncoderConfig:
     num_attention_heads: int = 16
     ffn_hidden_size: int = 4096
     downsample_hidden_size: int = 480
-    mel_frames_per_chunk: int = 100
-    mel_frames_per_window: int = 800
+    n_window: int = 50
+    n_window_infer: int = 800
     activation: str = "gelu"
     # Hugging Face builds the LayerNorms with the PyTorch default epsilon.
     layernorm_epsilon: float = 1e-5
@@ -57,17 +54,17 @@ class Qwen3ASREncoderConfig:
             "num_attention_heads",
             "ffn_hidden_size",
             "downsample_hidden_size",
-            "mel_frames_per_chunk",
+            "n_window",
         ):
             if getattr(self, name) < 1:
                 raise ValueError(f"{name} must be at least 1, got {getattr(self, name)}")
         if (
-            self.mel_frames_per_window < self.mel_frames_per_chunk
-            or self.mel_frames_per_window % self.mel_frames_per_chunk
+            self.n_window_infer < self.mel_frames_per_chunk
+            or self.n_window_infer % self.mel_frames_per_chunk
         ):
             raise ValueError(
-                f"mel_frames_per_window={self.mel_frames_per_window} must be a positive "
-                f"multiple of mel_frames_per_chunk={self.mel_frames_per_chunk}"
+                f"n_window_infer={self.n_window_infer} must be a positive multiple of "
+                f"2 * n_window={self.mel_frames_per_chunk}"
             )
         # The position embedding puts hidden_size / 2 sines and cosines side by side and
         # divides by hidden_size / 2 - 1.
@@ -84,6 +81,11 @@ class Qwen3ASREncoderConfig:
             raise ValueError(f"activation={self.activation!r} is not one of {sorted(ACTIVATIONS)}")
 
     @property
+    def mel_frames_per_chunk(self) -> int:
+        """Number of mel frames in a chunk."""
+        return 2 * self.n_window
+
+    @property
     def encoder_frames_per_chunk(self) -> int:
         """Number of encoder frames from a full chunk (13 from 100 mel frames)."""
         return self.calc_num_encoder_frames(self.mel_frames_per_chunk)
@@ -91,8 +93,7 @@ class Qwen3ASREncoderConfig:
     @property
     def encoder_frames_per_window(self) -> int:
         """Number of encoder frames in an attention window (104 for the released models)."""
-        num_chunks_per_window = self.mel_frames_per_window // self.mel_frames_per_chunk
-        return self.encoder_frames_per_chunk * num_chunks_per_window
+        return self.encoder_frames_per_chunk * (self.n_window_infer // self.mel_frames_per_chunk)
 
     @property
     def num_conv_out_features(self) -> int:
