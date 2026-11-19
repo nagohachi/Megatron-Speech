@@ -181,7 +181,7 @@ def build_cpu_inputs(mels: list[torch.Tensor]) -> Qwen3ASREncoderInputs:
 @pytest.fixture(name="inputs")
 def copy_inputs_to_gpu(cpu_inputs: Qwen3ASREncoderInputs) -> Qwen3ASREncoderInputs:
     """Copy the encoder inputs of the test utterances to the GPU."""
-    return cpu_inputs.copy_to("cuda")
+    return cpu_inputs.to("cuda")
 
 
 @pytest.fixture(name="hf_window_bounds")
