@@ -13,7 +13,7 @@ from megatron.core.transformer import TransformerConfig
 
 
 class SpeechLanguageModel(GPTModel):
-    """``GPTModel`` that runs the output layer and the loss only where ``loss_mask`` is set.
+    """``GPTModel`` used as the LLM of the speech LLM.
 
     Most positions of a speech recognition sequence are audio frames and prompt tokens, which
     take no loss. ``GPTModel`` computes the logits of every position, ``[num_tokens,
