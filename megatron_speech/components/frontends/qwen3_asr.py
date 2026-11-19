@@ -66,7 +66,7 @@ class Qwen3ASRLogMel(torch.nn.Module):
         if not waveforms:
             return []
         n_fft, hop_length = self.config.n_fft, self.config.hop_length
-        num_valid_frames = [self.config.calc_num_frames(len(waveform)) for waveform in waveforms]
+        valid_frame_counts = [self.config.calc_num_frames(len(waveform)) for waveform in waveforms]
         stft_inputs = []
         for waveform in waveforms:
             padded_waveform = torch.nn.functional.pad(
@@ -92,7 +92,7 @@ class Qwen3ASRLogMel(torch.nn.Module):
         log_spec = (self.mel_filters.T @ stft.abs().square()).clamp(min=1e-10).log10()
         frame_indices = torch.arange(log_spec.shape[-1], device=log_spec.device)
         valid_frame_mask = (
-            frame_indices < torch.tensor(num_valid_frames, device=log_spec.device)[:, None]
+            frame_indices < torch.tensor(valid_frame_counts, device=log_spec.device)[:, None]
         )
         max_log_spec = log_spec.masked_fill(~valid_frame_mask[:, None], float("-inf")).amax(
             dim=(1, 2), keepdim=True
@@ -101,6 +101,6 @@ class Qwen3ASRLogMel(torch.nn.Module):
         return [
             utterance_log_spec[:, :num_utterance_frames]
             for utterance_log_spec, num_utterance_frames in zip(
-                log_spec, num_valid_frames, strict=True
+                log_spec, valid_frame_counts, strict=True
             )
         ]
