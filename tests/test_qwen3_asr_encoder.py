@@ -157,7 +157,8 @@ def build_mels() -> list[torch.Tensor]:
 def run_reference(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tensor:
     """Pad the log-mels to a multiple of the chunk length with zeros and run Hugging Face's."""
     mel_frames_per_chunk = ENCODER_CONFIG.mel_frames_per_chunk
-    padded_length = -(-max(UTTERANCE_LENGTHS) // mel_frames_per_chunk) * mel_frames_per_chunk
+    longest_length = max(mel.shape[1] for mel in mels)
+    padded_length = -(-longest_length // mel_frames_per_chunk) * mel_frames_per_chunk
     features = torch.zeros(len(mels), ENCODER_CONFIG.num_mel_bins, padded_length)
     mask = torch.zeros(len(mels), padded_length, dtype=torch.long)
     for index, mel in enumerate(mels):
@@ -181,26 +182,27 @@ def copy_inputs_to_gpu(cpu_inputs: Qwen3ASREncoderInputs) -> Qwen3ASREncoderInpu
 
 
 @pytest.fixture(name="hf_window_bounds")
-def calc_hf_window_bounds() -> list[int]:
+def calc_hf_window_bounds(mels: list[torch.Tensor]) -> list[int]:
     """Calculate the cumulative encoder frame counts of the windows as Hugging Face does."""
     mel_frames_per_chunk = ENCODER_CONFIG.mel_frames_per_chunk
+    lengths = [mel.shape[1] for mel in mels]
     chunk_lengths = [
         min(mel_frames_per_chunk, n - start)
-        for n in UTTERANCE_LENGTHS
+        for n in lengths
         for start in range(0, n, mel_frames_per_chunk)
     ]
     return get_audio_cu_seqlens(
         torch.tensor(chunk_lengths),
-        torch.tensor(UTTERANCE_LENGTHS),
+        torch.tensor(lengths),
         ENCODER_CONFIG.n_window_infer,
         ENCODER_CONFIG.n_window,
     ).tolist()
 
 
 @pytest.fixture(name="hf_encoder_frame_counts")
-def calc_hf_encoder_frame_counts() -> list[int]:
+def calc_hf_encoder_frame_counts(mels: list[torch.Tensor]) -> list[int]:
     """Calculate the encoder frames of each utterance with Hugging Face's length formula."""
-    lengths = torch.tensor(UTTERANCE_LENGTHS)
+    lengths = torch.tensor([mel.shape[1] for mel in mels])
     return _get_feat_extract_output_lengths(lengths, ENCODER_CONFIG.n_window).tolist()
 
 
