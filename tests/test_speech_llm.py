@@ -7,6 +7,7 @@ import torch
 from megatron.core.models.mimo import MimoModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.tensor_parallel import gather_from_tensor_model_parallel_region
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer import TransformerConfig
 from megatron.training.models.gpt import GPTModelConfig
@@ -34,6 +35,7 @@ MEL_LENGTHS = [100, 37]
 # Text tokens before the audio of each utterance, and target tokens after it.
 NUM_PROMPT_TOKENS = 3
 NUM_TARGET_TOKENS = 4
+WORD_EMBEDDINGS = "language_model.embedding.word_embeddings.weight"
 ENCODER_CONFIG = Qwen3ASREncoderConfig(
     num_mel_bins=32,
     d_model=32,
@@ -168,18 +170,19 @@ def run_reference(model: MimoModel, batch: Batch) -> torch.Tensor:
     """Run the modules of ``model`` one by one: encoder, projector, then LLM.
 
     The projected encoder frames replace the LLM's embeddings of the audio tokens, in order.
+    The LLM's rotary positions add nothing to the word embeddings.
     """
-    language_model = model.language_model
-    decoder_input = language_model.embedding(
-        input_ids=batch.input_ids, position_ids=batch.position_ids
-    )
+    # The word embeddings are split over the TP ranks along the vocabulary.
+    word_embeddings = gather_from_tensor_model_parallel_region(
+        dict(model.named_parameters())[WORD_EMBEDDINGS].t()
+    ).t()
+    decoder_input = torch.nn.functional.embedding(batch.input_ids, word_embeddings).transpose(0, 1)
     if batch.encoder_inputs is not None:
         audio = model.modality_submodules[AUDIO_MODALITY]
         frames = audio.encoders[ENCODER_NAME](**list_encoder_kwargs(batch.encoder_inputs))
         is_audio = (batch.input_ids == AUDIO_TOKEN_ID).transpose(0, 1)
-        decoder_input = decoder_input.clone()
         decoder_input[is_audio] = audio.input_projections[0](frames).to(decoder_input.dtype)
-    return language_model(
+    return model.language_model(
         None,
         batch.position_ids,
         None,
