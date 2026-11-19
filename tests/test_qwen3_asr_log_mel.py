@@ -57,9 +57,16 @@ def test_num_frames_match_hf(
     waveforms: list[torch.Tensor],
     feature_extractor: Qwen3ASRFeatureExtractor,
 ) -> None:
-    """Check that each log-mel has Hugging Face's frames, as many as calc_num_frames counts."""
+    """Check that each log-mel has as many mel bins and frames as Hugging Face's."""
     for log_mel, waveform in zip(log_mels, waveforms, strict=True):
         assert log_mel.shape == run_reference(feature_extractor, waveform, "cpu").shape
+
+
+def test_num_frames_match_calc_num_frames(
+    log_mels: list[torch.Tensor], waveforms: list[torch.Tensor]
+) -> None:
+    """Check that calc_num_frames, which the example builder uses, counts each log-mel's frames."""
+    for log_mel, waveform in zip(log_mels, waveforms, strict=True):
         assert log_mel.shape[1] == CONFIG.calc_num_frames(len(waveform))
 
 
