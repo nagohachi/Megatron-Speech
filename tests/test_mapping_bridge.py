@@ -124,11 +124,14 @@ def test_logits_match_hf(
     assert error < TOLERANCES[dtype]
 
 
-@pytest.mark.parametrize("dtype", [torch.float32], ids=str)
 def test_export_restores_hf_weights(
-    model: SpeechLanguageModel, bridge: MappingBridge, hf_dir: Path
+    model: SpeechLanguageModel, bridge: MappingBridge, hf_dir: Path, dtype: torch.dtype
 ) -> None:
-    """Check that writing the loaded fp32 weights back gives every Hugging Face weight exactly."""
+    """Check that writing the loaded weights back gives every Hugging Face weight exactly.
+
+    A bf16 model holds the fp32 Hugging Face weights rounded to bf16, so its export is compared
+    with the rounded weights.
+    """
     hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_dir)
     exported = dict(
         bridge.stream_weights_megatron_to_hf([model], hf_pretrained, show_progress=False)
@@ -136,4 +139,5 @@ def test_export_restores_hf_weights(
     if torch.distributed.get_rank() == 0:
         assert exported.keys() == set(hf_pretrained.state.keys())
         for name, tensor in exported.items():
-            assert torch.equal(tensor, hf_pretrained.state[name]), name
+            expected = hf_pretrained.state[name].to(dtype).to(tensor.dtype)
+            assert torch.equal(tensor, expected), name
