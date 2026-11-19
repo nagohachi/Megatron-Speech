@@ -29,8 +29,13 @@ class SpeechLanguageModel(GPTModel):
     ) -> torch.Tensor:
         """Run ``GPTModel.forward`` with the arguments that ``MimoModel`` passes.
 
-        With ``labels`` and ``loss_mask``, return the loss ``[batch, sequence]`` from
-        ``calc_target_loss``; otherwise return what ``GPTModel`` returns.
+        The return value depends on ``labels`` and ``loss_mask``:
+
+        - both given: the loss ``[batch, sequence]`` from ``calc_target_loss``, computed only
+          where ``loss_mask`` is set and 0 elsewhere.
+        - ``labels`` only: ``GPTModel``'s loss ``[batch, sequence]`` at every position.
+        - neither: ``GPTModel``'s logits ``[batch, sequence, vocabulary]``, split over the TP
+          ranks along the vocabulary.
         """
         return super().forward(
             input_ids,
