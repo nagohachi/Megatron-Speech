@@ -153,7 +153,7 @@ def build_mels() -> list[torch.Tensor]:
     return [torch.randn(ENCODER_CONFIG.num_mel_bins, length) for length in UTTERANCE_LENGTHS]
 
 
-def run_reference(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tensor:
+def run_hf_encoder(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tensor:
     """Pad the log-mels to a multiple of the chunk length with zeros and run Hugging Face's."""
     mel_frames_per_chunk = ENCODER_CONFIG.mel_frames_per_chunk
     longest_length = max(mel.shape[1] for mel in mels)
@@ -258,15 +258,15 @@ def test_rejects_batch_without_frames(lengths: list[int]) -> None:
 
 
 @pytest.fixture(name="hf_output")
-def run_hf_encoder(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tensor:
-    """Run the Hugging Face encoder on the test utterances without gradients."""
+def calc_hf_output(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tensor:
+    """Calculate the Hugging Face encoder's output for the test utterances without gradients."""
     with torch.no_grad():
-        return run_reference(reference, mels)
+        return run_hf_encoder(reference, mels)
 
 
 @pytest.fixture(name="encoder_output")
-def run_encoder(encoder: Qwen3ASREncoder, inputs: Qwen3ASREncoderInputs) -> torch.Tensor:
-    """Run the encoder under test on the test utterances without gradients."""
+def calc_encoder_output(encoder: Qwen3ASREncoder, inputs: Qwen3ASREncoderInputs) -> torch.Tensor:
+    """Calculate the output of the encoder under test for the test utterances without gradients."""
     with torch.no_grad():
         return encoder(**vars(inputs))
 
@@ -296,7 +296,7 @@ def test_gradients_match_hf(
     dtype: torch.dtype,
 ) -> None:
     """Check that weight gradients equal the reference ones, combined and split as the weights."""
-    expected = run_reference(reference, mels)
+    expected = run_hf_encoder(reference, mels)
     actual = encoder(**vars(inputs))
     grad_output = torch.randn_like(expected)
     expected.backward(grad_output)

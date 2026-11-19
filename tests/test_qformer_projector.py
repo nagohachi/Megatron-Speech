@@ -183,7 +183,7 @@ def build_frames() -> torch.Tensor:
     return torch.randn(sum(UTTERANCE_LENGTHS), 48, device="cuda", requires_grad=True)
 
 
-def run_reference(
+def run_hf_qformer(
     reference: Reference, frames: torch.Tensor, window_size: int | None
 ) -> torch.Tensor:
     """Cut the utterances into zero-padded windows and run the Hugging Face model on them.
@@ -210,19 +210,19 @@ def run_reference(
 
 
 @pytest.fixture(name="reference_output")
-def run_hf_qformer(
+def calc_reference_output(
     reference: Reference, projector_config: QFormerProjectorConfig, frames: torch.Tensor
 ) -> torch.Tensor:
-    """Run the Hugging Face Q-Former and the projection on the frames without gradients."""
+    """Calculate the Hugging Face Q-Former's projected output for the frames without gradients."""
     with torch.no_grad():
-        return run_reference(reference, frames, projector_config.window_size)
+        return run_hf_qformer(reference, frames, projector_config.window_size)
 
 
 @pytest.fixture(name="projector_output")
-def run_projector(
+def calc_projector_output(
     projector: QFormerProjector, frames: torch.Tensor, dtype: torch.dtype
 ) -> torch.Tensor:
-    """Run the projector under test on the frames in its dtype without gradients."""
+    """Calculate the output of the projector under test for the frames in its dtype."""
     cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
     with torch.no_grad():
         return projector(frames.to(dtype), cu_seqlens)
@@ -259,7 +259,7 @@ def test_gradients_match_hf(
     """Check that gradients of the input and of every parameter equal the reference ones."""
     cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
     projector_frames = frames.detach().to(dtype).requires_grad_()
-    expected = run_reference(reference, frames, projector_config.window_size)
+    expected = run_hf_qformer(reference, frames, projector_config.window_size)
     actual = projector(projector_frames, cu_seqlens)
     grad_output = torch.randn_like(expected)
     expected.backward(grad_output)

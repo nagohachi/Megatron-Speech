@@ -27,7 +27,7 @@ PROJECTOR_CONFIGS = [
     params=PROJECTOR_CONFIGS,
     ids=lambda config: f"{config.num_layers}layers-{config.activation}",
 )
-def build_projector_config(request: pytest.FixtureRequest) -> MLPProjectorConfig:
+def get_projector_config(request: pytest.FixtureRequest) -> MLPProjectorConfig:
     """Return a projector config with one to three layers."""
     return request.param
 
@@ -90,7 +90,7 @@ def build_inputs() -> torch.Tensor:
     return torch.randn(10, 48, device="cuda", requires_grad=True)
 
 
-def run_reference(
+def run_reference_layers(
     reference: list[torch.nn.Linear], x: torch.Tensor, activation: str
 ) -> torch.Tensor:
     """Apply the reference layers with ``activation`` between them."""
@@ -102,19 +102,19 @@ def run_reference(
 
 
 @pytest.fixture(name="reference_output")
-def run_reference_layers(
+def calc_reference_output(
     reference: list[torch.nn.Linear], projector_config: MLPProjectorConfig, inputs: torch.Tensor
 ) -> torch.Tensor:
-    """Run the reference layers on the input without gradients."""
+    """Calculate the reference layers' output for the input without gradients."""
     with torch.no_grad():
-        return run_reference(reference, inputs, projector_config.activation)
+        return run_reference_layers(reference, inputs, projector_config.activation)
 
 
 @pytest.fixture(name="projector_output")
-def run_projector(
+def calc_projector_output(
     projector: MLPProjector, inputs: torch.Tensor, dtype: torch.dtype
 ) -> torch.Tensor:
-    """Run the projector under test on the input in its dtype without gradients."""
+    """Calculate the output of the projector under test for the input in its dtype."""
     with torch.no_grad():
         return projector(inputs.to(dtype))
 
@@ -154,7 +154,7 @@ def test_gradients_match_torch(
 ) -> None:
     """Check that gradients of the input and of every weight equal the reference ones."""
     projector_inputs = inputs.detach().to(dtype).requires_grad_()
-    expected = run_reference(reference, inputs, projector_config.activation)
+    expected = run_reference_layers(reference, inputs, projector_config.activation)
     actual = projector(projector_inputs)
     grad_output = torch.randn_like(expected)
     expected.backward(grad_output)
