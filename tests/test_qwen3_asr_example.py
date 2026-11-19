@@ -28,13 +28,14 @@ def get_force_language(request: pytest.FixtureRequest) -> bool:
 
 @pytest.fixture(
     name="num_samples",
-    params=[8000, 32000, 36800],
-    ids=["shorter-than-a-chunk", "whole-chunks", "partial-last-chunk"],
+    params=[3000, 8000, 32000, 36800],
+    ids=["shorter-than-min-length", "shorter-than-a-chunk", "whole-chunks", "partial-last-chunk"],
 )
 def get_num_samples(request: pytest.FixtureRequest) -> int:
-    """Return the length of the audio at 16 kHz: 0.5 s, 2 s or 2.3 s.
+    """Return the length of the audio at 16 kHz: 0.19 s, 0.5 s, 2 s or 2.3 s.
 
-    They give 50 mel frames in one partial chunk, 200 in two whole chunks, and 230.
+    The feature extractor pads audio shorter than 0.5 s to 0.5 s. They give 50 mel frames in
+    one partial chunk (twice), 200 in two whole chunks, and 230.
     """
     return request.param
 
@@ -56,7 +57,8 @@ def build_example(
     processor: Qwen3ASRProcessor, waveform: np.ndarray, transcript: str, force_language: bool
 ) -> SpeechExample:
     """Build the example of the waveform with the transcript in English."""
-    return Qwen3ASRExampleBuilder(processor, "English", force_language).build(waveform, transcript)
+    builder = Qwen3ASRExampleBuilder(processor, Qwen3ASREncoderConfig(), "English", force_language)
+    return builder.build(waveform, transcript)
 
 
 def test_input_ids_match_hf(
@@ -86,10 +88,19 @@ def test_loss_mask_covers_answer(
     assert processor.tokenizer.decode(example.input_ids[-num_targets:]) == expected
 
 
-def test_mel_matches_hf_feature_extractor(
+def test_waveform_is_kept(example: SpeechExample, waveform: np.ndarray) -> None:
+    """Check that the example keeps the float32 waveform, for the log-mel on the GPU."""
+    assert example.waveform.dtype == torch.float32
+    assert torch.equal(example.waveform, torch.from_numpy(waveform))
+
+
+def test_audio_tokens_match_encoder_frames(
     example: SpeechExample, processor: Qwen3ASRProcessor, waveform: np.ndarray
 ) -> None:
-    """Check that the log-mel is Hugging Face's feature extractor's for the utterance alone."""
+    """Check that there is one audio token per encoder frame of the released Qwen3-ASR.
+
+    The mel frames are those that Hugging Face's feature extractor makes of the waveform.
+    """
     features = processor.feature_extractor(
         waveform,
         sampling_rate=processor.feature_extractor.sampling_rate,
@@ -98,12 +109,5 @@ def test_mel_matches_hf_feature_extractor(
         return_tensors="pt",
     )
     num_mel_frames = int(features.attention_mask[0].sum())
-    assert torch.equal(example.mel, features.input_features[0, :, :num_mel_frames])
-
-
-def test_audio_tokens_match_encoder_frames(
-    example: SpeechExample, processor: Qwen3ASRProcessor
-) -> None:
-    """Check that there is one audio token per encoder frame of the released Qwen3-ASR."""
     num_audio_tokens = int((example.input_ids == processor.audio_token_id).sum())
-    assert num_audio_tokens == Qwen3ASREncoderConfig().calc_num_encoder_frames(example.mel.shape[1])
+    assert num_audio_tokens == Qwen3ASREncoderConfig().calc_num_encoder_frames(num_mel_frames)
