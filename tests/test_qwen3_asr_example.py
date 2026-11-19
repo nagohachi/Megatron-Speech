@@ -75,10 +75,11 @@ def test_input_ids_match_hf(
 def test_loss_mask_covers_answer(
     example: SpeechExample, processor: Qwen3ASRProcessor, transcript: str, force_language: bool
 ) -> None:
-    """Check that the loss mask covers the answer at the end, and only it."""
+    """Check that the float32 loss mask covers the answer at the end, and only it."""
     expected = f"{transcript}<|im_end|>"
     if not force_language:
         expected = f"language English<asr_text>{expected}"
+    assert example.loss_mask.dtype == torch.float32
     num_targets = int(example.loss_mask.sum())
     assert torch.all(example.loss_mask[-num_targets:] == 1)
     assert torch.all(example.loss_mask[:-num_targets] == 0)

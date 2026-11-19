@@ -11,7 +11,8 @@ class SpeechExample:
 
     - ``mel``: ``[num_mel_bins, num_mel_frames]`` log-mel of the utterance, without padding.
     - ``input_ids``: ``[num_tokens]`` token ids, with one audio token per encoder frame.
-    - ``loss_mask``: ``[num_tokens]``, 1 on the tokens that the model learns to predict.
+    - ``loss_mask``: ``[num_tokens]`` float32, 1 on the tokens that the model learns to predict
+      and 0 elsewhere; Megatron's loss is weighted by it.
     """
 
     mel: torch.Tensor
@@ -53,5 +54,10 @@ class Qwen3ASRExampleBuilder:
         return SpeechExample(
             mel=prompt_inputs.input_features[0, :, :num_mel_frames],
             input_ids=torch.cat([prompt_ids, target_ids]),
-            loss_mask=torch.cat([torch.zeros(len(prompt_ids)), torch.ones(len(target_ids))]),
+            loss_mask=torch.cat(
+                [
+                    torch.zeros(len(prompt_ids), dtype=torch.float32),
+                    torch.ones(len(target_ids), dtype=torch.float32),
+                ]
+            ),
         )
