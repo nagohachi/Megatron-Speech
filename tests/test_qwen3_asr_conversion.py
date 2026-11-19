@@ -30,6 +30,7 @@ from tests.hf_reference import (
     check_export_restores_hf_weights,
     randomize_norms,
     save_hf_checkpoint,
+    take_rank0_path,
 )
 from tests.numerical_error import TOLERANCES, calc_relative_error
 
@@ -60,6 +61,8 @@ HF_CONFIG = Qwen3ASRConfig(
     audio_token_id=127,
 )
 SEQUENCE_LENGTH = 16
+# A processor file of the checkpoint, which the saved checkpoint must keep.
+PREPROCESSOR_CONFIG = '{"feature_size": 32}'
 # Mel frames of the utterances: 33 encoder frames in two attention windows (26 and 7), and 5.
 MEL_LENGTHS = [250, 37]
 BRIDGE = MappingBridge(build_qwen3_asr_mappings())
@@ -143,6 +146,45 @@ def build_model(hf_dir: Path, dtype: torch.dtype, tensor_parallel_size: int) -> 
     model = build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups()).cuda()
     BRIDGE.load_weights_hf_to_megatron(PreTrainedCausalLM.from_pretrained(hf_dir), [model])
     return model
+
+
+@pytest.fixture(name="saved_dir")
+def save_loaded_model(model: MimoModel, hf_dir: Path, tmp_path: Path) -> Path:
+    """Save the model with the loaded weights as a Hugging Face checkpoint; return rank 0's path.
+
+    Beside the weights, the source checkpoint gets a processor file to keep.
+    """
+    if torch.distributed.get_rank() == 0:
+        (hf_dir / "preprocessor_config.json").write_text(PREPROCESSOR_CONFIG)
+    saved_dir = take_rank0_path(tmp_path / "saved")
+    BRIDGE.save_hf_checkpoint([model], PreTrainedCausalLM.from_pretrained(hf_dir), saved_dir)
+    return saved_dir
+
+
+def test_saved_weights_match_hf(saved_dir: Path, hf_dir: Path, dtype: torch.dtype) -> None:
+    """Check that the saved checkpoint holds every Hugging Face weight, in the model's dtype."""
+    if torch.distributed.get_rank() != 0:
+        return
+    source = PreTrainedCausalLM.from_pretrained(hf_dir).state
+    saved = PreTrainedCausalLM.from_pretrained(saved_dir).state
+    assert set(saved.keys()) == set(source.keys())
+    for name in source:
+        assert saved[name].dtype == dtype, name
+        assert torch.equal(saved[name], source[name].to(dtype)), name
+
+
+def test_saved_config_matches_hf(saved_dir: Path) -> None:
+    """Check that the saved checkpoint has the config of the source."""
+    if torch.distributed.get_rank() != 0:
+        return
+    assert Qwen3ASRConfig.from_pretrained(saved_dir).to_dict() == HF_CONFIG.to_dict()
+
+
+def test_saved_checkpoint_keeps_processor_file(saved_dir: Path) -> None:
+    """Check that the saved checkpoint has the processor file of the source, unchanged."""
+    if torch.distributed.get_rank() != 0:
+        return
+    assert (saved_dir / "preprocessor_config.json").read_text() == PREPROCESSOR_CONFIG
 
 
 def test_export_restores_hf_weights(model: MimoModel, hf_dir: Path, dtype: torch.dtype) -> None:

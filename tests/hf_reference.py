@@ -8,18 +8,23 @@ from transformers import PreTrainedModel
 from megatron_speech.conversion.bridge import MappingBridge
 
 
+def take_rank0_path(path: Path) -> Path:
+    """Return rank 0's ``path`` on every rank; each rank of a run has its own ``tmp_path``."""
+    paths = [path]
+    torch.distributed.broadcast_object_list(paths, src=0)
+    return paths[0]
+
+
 def save_hf_checkpoint(model: PreTrainedModel, tmp_path: Path) -> Path:
     """Save ``model`` as a Hugging Face checkpoint and return the directory that every rank reads.
 
-    Under torch.distributed, ``save_pretrained`` writes only on rank 0, so every rank takes rank
-    0's ``tmp_path``.
+    Under torch.distributed, ``save_pretrained`` writes only on rank 0.
     """
-    paths = [tmp_path]
-    torch.distributed.broadcast_object_list(paths, src=0)
+    hf_dir = take_rank0_path(tmp_path)
     if torch.distributed.get_rank() == 0:
-        model.save_pretrained(paths[0])
+        model.save_pretrained(hf_dir)
     torch.distributed.barrier()
-    return paths[0]
+    return hf_dir
 
 
 def check_export_restores_hf_weights(

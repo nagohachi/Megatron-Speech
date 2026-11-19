@@ -1,6 +1,14 @@
+from pathlib import Path
+
+import torch
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.core.transformer import MegatronModule
+
+# Files of a Hugging Face checkpoint besides the weights: config, tokenizer, processor.
+NON_WEIGHT_FILES = ["*.json", "*.txt", "*.jinja"]
 
 
 class MappingBridge(MegatronModelBridge):
@@ -10,7 +18,8 @@ class MappingBridge(MegatronModelBridge):
       (``*`` matches a layer number).
     - Loading: the base class's ``load_weights_hf_to_megatron`` reads Hugging Face weights
       into a model that Megatron-Speech builds.
-    - Writing back: the base class's ``stream_weights_megatron_to_hf``.
+    - Writing back: the base class's ``stream_weights_megatron_to_hf``, and
+      ``save_hf_checkpoint`` for a whole checkpoint directory.
     - Tensor parallelism: the mappings split the weights over the ranks and gather them back.
     """
 
@@ -22,3 +31,23 @@ class MappingBridge(MegatronModelBridge):
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return the registry of the mappings, through which the base class converts."""
         return MegatronMappingRegistry(*self.mappings)
+
+    def save_hf_checkpoint(
+        self, models: list[MegatronModule], hf_pretrained: PreTrainedCausalLM, path: Path
+    ) -> None:
+        """Write ``models`` as a Hugging Face checkpoint in ``path``, laid out as ``hf_pretrained``.
+
+        - Weights: the models' values, in the safetensors files of ``hf_pretrained``.
+        - Other files: the config, tokenizer and processor files of ``hf_pretrained``.
+
+        Every rank calls this, since gathering the weights over the tensor parallel ranks is
+        collective; rank 0 writes the files, and every rank returns once they are written.
+        """
+        if torch.distributed.get_rank() == 0:
+            hf_pretrained.save_artifacts(path, additional_files=NON_WEIGHT_FILES)
+        # The writer that Megatron-Bridge's AutoBridge.save_hf_weights also calls. AutoBridge
+        # itself picks Megatron-Bridge's own table for the architecture, not this bridge's.
+        hf_pretrained.state.source.save_generator(
+            self.stream_weights_megatron_to_hf(models, hf_pretrained, show_progress=False), path
+        )
+        torch.distributed.barrier()
