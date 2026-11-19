@@ -123,8 +123,8 @@ def run_reference(reference: GPTModel, batch: Batch) -> torch.Tensor:
     return reference(batch.input_ids, batch.position_ids, None, labels=batch.labels)
 
 
-def run_model(model: SpeechLanguageModel, batch: Batch) -> torch.Tensor:
-    """Run the model under test with the labels and the loss mask of ``batch``."""
+def calc_loss_at_targets(model: SpeechLanguageModel, batch: Batch) -> torch.Tensor:
+    """Calculate the loss of the model under test with the labels and loss mask of ``batch``."""
     return model(
         batch.input_ids,
         batch.position_ids,
@@ -145,7 +145,7 @@ def calc_reference_loss(reference: GPTModel, batch: Batch) -> torch.Tensor:
 def calc_model_loss(model: SpeechLanguageModel, batch: Batch) -> torch.Tensor:
     """Calculate the loss ``[batch, sequence]`` of the model under test without gradients."""
     with torch.no_grad():
-        return run_model(model, batch)
+        return calc_loss_at_targets(model, batch)
 
 
 def test_loss_has_gpt_model_shape(model_loss: torch.Tensor, reference_loss: torch.Tensor) -> None:
@@ -173,7 +173,7 @@ def test_gradients_match_gpt_model(
 ) -> None:
     """Check that the gradients of every parameter equal ``GPTModel``'s for the masked loss."""
     (run_reference(reference, batch) * batch.loss_mask).sum().backward()
-    (run_model(model, batch) * batch.loss_mask).sum().backward()
+    (calc_loss_at_targets(model, batch) * batch.loss_mask).sum().backward()
     reference_parameters = dict(reference.named_parameters())
     errors = {
         name: calc_relative_error(param.grad, reference_parameters[name].grad)
@@ -209,7 +209,7 @@ def test_loss_is_zero_without_targets(model_loss: torch.Tensor) -> None:
 @pytest.mark.parametrize("target_pattern", ["none"])
 def test_gradients_are_zero_without_targets(model: SpeechLanguageModel, batch: Batch) -> None:
     """Check that a batch without target positions gives every parameter a gradient of 0."""
-    (run_model(model, batch) * batch.loss_mask).sum().backward()
+    (calc_loss_at_targets(model, batch) * batch.loss_mask).sum().backward()
     for name, param in model.named_parameters():
         assert param.grad is not None, name
         assert torch.all(param.grad == 0), name
