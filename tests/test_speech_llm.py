@@ -205,8 +205,9 @@ def run_reference(model: MimoModel, batch: Batch) -> torch.Tensor:
     )
 
 
-def capture_llm_input(model: MimoModel, batch: Batch) -> torch.Tensor:
-    """Run the speech LLM under test and return the embeddings that it passes to the LLM."""
+@pytest.fixture(name="model_llm_input")
+def calc_model_llm_input(model: MimoModel, batch: Batch) -> torch.Tensor:
+    """Calculate the embeddings that the speech LLM under test passes to the LLM."""
     captured = {}
 
     def save_llm_input(
@@ -219,17 +220,11 @@ def capture_llm_input(model: MimoModel, batch: Batch) -> torch.Tensor:
 
     handle = model.language_model.register_forward_pre_hook(save_llm_input, with_kwargs=True)
     try:
-        calc_mimo_loss(model, batch)
+        with torch.no_grad():
+            calc_mimo_loss(model, batch)
     finally:
         handle.remove()
     return captured["decoder_input"]
-
-
-@pytest.fixture(name="model_llm_input")
-def calc_model_llm_input(model: MimoModel, batch: Batch) -> torch.Tensor:
-    """Calculate the LLM's input in the speech LLM under test, without gradients."""
-    with torch.no_grad():
-        return capture_llm_input(model, batch)
 
 
 @pytest.fixture(name="reference_llm_input")
