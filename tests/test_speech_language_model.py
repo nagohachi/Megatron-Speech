@@ -189,6 +189,22 @@ def calc_model_loss(model: SpeechLanguageModel, batch: Batch) -> torch.Tensor:
         return calc_loss_at_targets(model, batch)
 
 
+@pytest.fixture(name="reference_gradients")
+def calc_reference_gradients(reference: GPTModel, batch: Batch) -> dict[str, torch.Tensor | None]:
+    """Calculate the reference gradients of the loss summed with ``loss_mask``, by parameter."""
+    (run_reference(reference, batch) * batch.loss_mask).sum().backward()
+    return {name: param.grad for name, param in reference.named_parameters()}
+
+
+@pytest.fixture(name="model_gradients")
+def calc_model_gradients(
+    model: SpeechLanguageModel, batch: Batch
+) -> dict[str, torch.Tensor | None]:
+    """Calculate the gradients of the model under test for the same loss, by parameter."""
+    (calc_loss_at_targets(model, batch) * batch.loss_mask).sum().backward()
+    return {name: param.grad for name, param in model.named_parameters()}
+
+
 def test_loss_has_gpt_model_shape(
     model_loss: torch.Tensor, reference_loss: torch.Tensor, batch: Batch
 ) -> None:
@@ -212,15 +228,14 @@ def test_loss_is_zero_off_targets(model_loss: torch.Tensor, batch: Batch) -> Non
 
 
 def test_gradients_match_gpt_model(
-    model: SpeechLanguageModel, reference: GPTModel, batch: Batch, dtype: torch.dtype
+    model_gradients: dict[str, torch.Tensor | None],
+    reference_gradients: dict[str, torch.Tensor | None],
+    dtype: torch.dtype,
 ) -> None:
     """Check that the gradients of every parameter equal ``GPTModel``'s for the masked loss."""
-    (run_reference(reference, batch) * batch.loss_mask).sum().backward()
-    (calc_loss_at_targets(model, batch) * batch.loss_mask).sum().backward()
-    reference_parameters = dict(reference.named_parameters())
     errors = {
-        name: calc_relative_error(param.grad, reference_parameters[name].grad)
-        for name, param in model.named_parameters()
+        name: calc_relative_error(grad, reference_gradients[name])
+        for name, grad in model_gradients.items()
     }
     logger.info(
         "%s: gradient max relative error %s",
@@ -254,12 +269,13 @@ def test_loss_is_zero_without_targets(model_loss: torch.Tensor) -> None:
 
 
 @pytest.mark.parametrize("target_pattern", ["none"])
-def test_gradients_are_zero_without_targets(model: SpeechLanguageModel, batch: Batch) -> None:
+def test_gradients_are_zero_without_targets(
+    model_gradients: dict[str, torch.Tensor | None],
+) -> None:
     """Check that a batch without target positions gives every parameter a gradient of 0."""
-    (calc_loss_at_targets(model, batch) * batch.loss_mask).sum().backward()
-    for name, param in model.named_parameters():
-        assert param.grad is not None, name
-        assert torch.all(param.grad == 0), name
+    for name, grad in model_gradients.items():
+        assert grad is not None, name
+        assert torch.all(grad == 0), name
 
 
 def test_returns_gpt_model_loss_without_loss_mask(
