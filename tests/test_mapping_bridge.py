@@ -12,6 +12,7 @@ from transformers import Qwen3Config, Qwen3ForCausalLM
 
 from megatron_speech.conversion.bridge import MappingBridge
 from megatron_speech.models.language_model import SpeechLanguageModel
+from tests.hf_checkpoint import check_export_restores_hf_weights, save_hf_checkpoint
 from tests.numerical_error import TOLERANCES, calc_relative_error
 
 pytestmark = pytest.mark.gpu
@@ -35,23 +36,17 @@ BRIDGE = MappingBridge(Qwen3Bridge().mapping_registry().get_all_mappings())
 
 @pytest.fixture(name="hf_dir")
 def build_hf_checkpoint(tmp_path: Path, tensor_parallel_size: int) -> Path:
-    """Save a Qwen3 with random weights as a Hugging Face checkpoint that every rank reads.
+    """Save a Qwen3 with random weights as a Hugging Face checkpoint, the same on every rank.
 
-    Under torch.distributed, ``save_pretrained`` writes only on rank 0, so every rank takes
-    rank 0's directory. ``tensor_parallel_size`` makes torch.distributed start first.
+    ``tensor_parallel_size`` makes torch.distributed start first.
     """
-    paths = [tmp_path]
-    torch.distributed.broadcast_object_list(paths, src=0)
-    if torch.distributed.get_rank() == 0:
-        torch.manual_seed(0)
-        model = Qwen3ForCausalLM(HF_CONFIG)
-        with torch.no_grad():  # RMSNorm weights away from 1, so that a missed copy shows
-            for name, param in model.named_parameters():
-                if "norm" in name:
-                    param.normal_(mean=1.0, std=0.1)
-        model.save_pretrained(paths[0])
-    torch.distributed.barrier()
-    return paths[0]
+    torch.manual_seed(0)
+    model = Qwen3ForCausalLM(HF_CONFIG)
+    with torch.no_grad():  # RMSNorm weights away from 1, so that a missed copy shows
+        for name, param in model.named_parameters():
+            if "norm" in name:
+                param.normal_(mean=1.0, std=0.1)
+    return save_hf_checkpoint(model, tmp_path)
 
 
 @pytest.fixture(name="model")
@@ -108,17 +103,5 @@ def test_logits_match_hf(model: SpeechLanguageModel, hf_dir: Path, dtype: torch.
 def test_export_restores_hf_weights(
     model: SpeechLanguageModel, hf_dir: Path, dtype: torch.dtype
 ) -> None:
-    """Check that writing the loaded weights back gives every Hugging Face weight exactly.
-
-    A bf16 model holds the fp32 Hugging Face weights rounded to bf16, so its export is compared
-    with the rounded weights.
-    """
-    hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_dir)
-    exported = dict(
-        BRIDGE.stream_weights_megatron_to_hf([model], hf_pretrained, show_progress=False)
-    )
-    if torch.distributed.get_rank() == 0:
-        assert exported.keys() == set(hf_pretrained.state.keys())
-        for name, tensor in exported.items():
-            assert tensor.dtype == dtype, name
-            assert torch.equal(tensor, hf_pretrained.state[name].to(dtype)), name
+    """Check that writing the loaded weights back gives every Hugging Face weight exactly."""
+    check_export_restores_hf_weights(BRIDGE, model, hf_dir, dtype)
