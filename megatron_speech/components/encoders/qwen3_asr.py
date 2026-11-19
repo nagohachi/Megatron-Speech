@@ -22,27 +22,22 @@ NUM_CONVOLUTIONS = 3
 class Qwen3ASREncoderConfig:
     """Shape of ``Qwen3ASREncoder``; the defaults are those of the released Qwen3-ASR models.
 
-    Fields with a different name in Hugging Face's ``Qwen3ASREncoderConfig``:
-
-    - ``hidden_size``: ``d_model``
-    - ``num_layers``: ``encoder_layers``
-    - ``num_attention_heads``: ``encoder_attention_heads``
-    - ``ffn_hidden_size``: ``encoder_ffn_dim``
-    - ``activation``: ``activation_function`` (the MLP activation; the convolutions use GELU)
+    The fields have the names of Hugging Face's ``Qwen3ASREncoderConfig``.
 
     The encoder cuts the log-mel frames of an utterance into chunks of ``2 * n_window`` frames
     and lets the encoder frames attend within windows of ``n_window_infer`` mel frames.
     """
 
     num_mel_bins: int = 128
-    hidden_size: int = 1024
-    num_layers: int = 24
-    num_attention_heads: int = 16
-    ffn_hidden_size: int = 4096
+    d_model: int = 1024
+    encoder_layers: int = 24
+    encoder_attention_heads: int = 16
+    encoder_ffn_dim: int = 4096
     downsample_hidden_size: int = 480
     n_window: int = 50
     n_window_infer: int = 800
-    activation: str = "gelu"
+    # The activation of the MLPs; the convolutions use GELU whatever this says.
+    activation_function: str = "gelu"
     # Hugging Face builds the LayerNorms with the PyTorch default epsilon.
     layernorm_epsilon: float = 1e-5
 
@@ -50,9 +45,9 @@ class Qwen3ASREncoderConfig:
         """Raise ValueError for shapes that the encoder or its inputs cannot use."""
         for name in (
             "num_mel_bins",
-            "num_layers",
-            "num_attention_heads",
-            "ffn_hidden_size",
+            "encoder_layers",
+            "encoder_attention_heads",
+            "encoder_ffn_dim",
             "downsample_hidden_size",
             "n_window",
         ):
@@ -66,19 +61,20 @@ class Qwen3ASREncoderConfig:
                 f"n_window_infer={self.n_window_infer} must be a positive multiple of "
                 f"2 * n_window={self.mel_frames_per_chunk}"
             )
-        # The position embedding puts hidden_size / 2 sines and cosines side by side and
-        # divides by hidden_size / 2 - 1.
-        if self.hidden_size < 4 or self.hidden_size % 2:
+        # The position embedding puts d_model / 2 sines and cosines side by side and
+        # divides by d_model / 2 - 1.
+        if self.d_model < 4 or self.d_model % 2:
+            raise ValueError(f"d_model must be an even number of at least 4, got {self.d_model}")
+        if self.d_model % self.encoder_attention_heads:
             raise ValueError(
-                f"hidden_size must be an even number of at least 4, got {self.hidden_size}"
+                f"d_model={self.d_model} is not a multiple of "
+                f"encoder_attention_heads={self.encoder_attention_heads}"
             )
-        if self.hidden_size % self.num_attention_heads:
+        if self.activation_function not in ACTIVATIONS:
             raise ValueError(
-                f"hidden_size={self.hidden_size} is not a multiple of "
-                f"num_attention_heads={self.num_attention_heads}"
+                f"activation_function={self.activation_function!r} is not one of "
+                f"{sorted(ACTIVATIONS)}"
             )
-        if self.activation not in ACTIVATIONS:
-            raise ValueError(f"activation={self.activation!r} is not one of {sorted(ACTIVATIONS)}")
 
     @property
     def mel_frames_per_chunk(self) -> int:
@@ -190,7 +186,7 @@ class Qwen3ASREncoder(MegatronModule):
     """Qwen3-ASR audio encoder (the AuT encoder of Qwen3-Omni) without its projector.
 
     Matches Hugging Face's ``Qwen3ASREncoder``. Each chunk goes through ``NUM_CONVOLUTIONS``
-    convolutions with GELU and a linear layer to ``hidden_size``, and a sinusoidal embedding of
+    convolutions with GELU and a linear layer to ``d_model``, and a sinusoidal embedding of
     the position within the chunk is added. The valid encoder frames of all chunks then go
     through pre-LayerNorm transformer layers with bidirectional attention within each window,
     and a final LayerNorm. The attention heads and MLPs are split over the tensor parallel
@@ -216,7 +212,7 @@ class Qwen3ASREncoder(MegatronModule):
                     f"pg_collection.tp has {pg_collection.tp.size()} ranks, but "
                     f"llm_config.tensor_model_parallel_size is {tp_size}"
                 )
-            for name in ("num_attention_heads", "ffn_hidden_size"):
+            for name in ("encoder_attention_heads", "encoder_ffn_dim"):
                 if getattr(encoder_config, name) % tp_size:
                     raise ValueError(
                         f"{name}={getattr(encoder_config, name)} cannot be split over "
@@ -226,9 +222,9 @@ class Qwen3ASREncoder(MegatronModule):
         def build_position_embedding() -> torch.Tensor:
             """Build the sinusoidal position embedding that Hugging Face's encoder adds.
 
-            The embedding is ``[encoder_frames_per_chunk, hidden_size]``.
+            The embedding is ``[encoder_frames_per_chunk, d_model]``.
             """
-            num_channels = encoder_config.hidden_size
+            num_channels = encoder_config.d_model
             log_timescale_increment = math.log(10000.0) / (num_channels // 2 - 1)
             inv_timescales = torch.exp(-log_timescale_increment * torch.arange(num_channels // 2))
             positions = torch.arange(encoder_config.encoder_frames_per_chunk)
@@ -239,18 +235,18 @@ class Qwen3ASREncoder(MegatronModule):
             """Build the layers' config: pre-LayerNorm, biases, the configured MLP activation."""
             return build_component_transformer_config(
                 llm_config,
-                num_layers=encoder_config.num_layers,
-                hidden_size=encoder_config.hidden_size,
-                num_attention_heads=encoder_config.num_attention_heads,
-                num_query_groups=encoder_config.num_attention_heads,
-                kv_channels=encoder_config.hidden_size // encoder_config.num_attention_heads,
-                ffn_hidden_size=encoder_config.ffn_hidden_size,
+                num_layers=encoder_config.encoder_layers,
+                hidden_size=encoder_config.d_model,
+                num_attention_heads=encoder_config.encoder_attention_heads,
+                num_query_groups=encoder_config.encoder_attention_heads,
+                kv_channels=encoder_config.d_model // encoder_config.encoder_attention_heads,
+                ffn_hidden_size=encoder_config.encoder_ffn_dim,
                 normalization="LayerNorm",
                 layernorm_epsilon=encoder_config.layernorm_epsilon,
                 add_bias_linear=True,
                 add_qkv_bias=True,
                 gated_linear_unit=False,
-                activation_func=ACTIVATIONS[encoder_config.activation],
+                activation_func=ACTIVATIONS[encoder_config.activation_function],
                 # The fused bias-GELU kernel uses the tanh approximation of GELU.
                 bias_activation_fusion=False,
             )
@@ -266,7 +262,7 @@ class Qwen3ASREncoder(MegatronModule):
         self.conv2d3 = torch.nn.Conv2d(num_channels, num_channels, **conv_kwargs)
         self.conv_out = torch.nn.Linear(
             encoder_config.num_conv_out_features,
-            encoder_config.hidden_size,
+            encoder_config.d_model,
             bias=False,
             dtype=config.params_dtype,
         )
@@ -291,7 +287,7 @@ class Qwen3ASREncoder(MegatronModule):
     ) -> torch.Tensor:
         """Encode the utterances that ``Qwen3ASREncoderInputs`` describes.
 
-        Returns ``[num_encoder_frames, hidden_size]``, utterance by utterance.
+        Returns ``[num_encoder_frames, d_model]``, utterance by utterance.
         """
         hidden = input_features.unsqueeze(1).to(self.conv2d1.weight.dtype)
         for conv in (self.conv2d1, self.conv2d2, self.conv2d3):
@@ -304,7 +300,7 @@ class Qwen3ASREncoder(MegatronModule):
             )
         )
         hidden = hidden + self.position_embedding[:num_steps].to(hidden.dtype)
-        # Keep the valid encoder frames: [num_encoder_frames, 1, hidden_size] in Megatron's
+        # Keep the valid encoder frames: [num_encoder_frames, 1, d_model] in Megatron's
         # [sequence, batch].
         hidden = hidden.reshape(-1, hidden.shape[-1]).index_select(0, encoder_frame_index)
         hidden = hidden.unsqueeze(1)

@@ -36,10 +36,10 @@ CONV_OUT = "conv_out"
 # Windows of 200 mel frames (26 encoder frames) so that the 250-frame utterance spans two.
 ENCODER_CONFIG = Qwen3ASREncoderConfig(
     num_mel_bins=32,
-    hidden_size=64,
-    num_layers=2,
-    num_attention_heads=4,
-    ffn_hidden_size=128,
+    d_model=64,
+    encoder_layers=2,
+    encoder_attention_heads=4,
+    encoder_ffn_dim=128,
     downsample_hidden_size=16,
     n_window_infer=200,
 )
@@ -54,13 +54,13 @@ def map_hf_tensors(hf_tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tenso
 
     def interleave_qkv(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
         """Concatenate q, k and v head by head, as Megatron's fused ``linear_qkv`` stores them."""
-        num_heads = ENCODER_CONFIG.num_attention_heads
+        num_heads = ENCODER_CONFIG.encoder_attention_heads
         heads = [t.reshape(num_heads, -1, *t.shape[1:]) for t in (query, key, value)]
         return torch.cat(heads, dim=1).reshape(-1, *query.shape[1:])
 
     mapped = {f"{name}.weight": hf_tensors[f"{name}.weight"] for name in (*CONVOLUTIONS, CONV_OUT)}
     mapped |= {f"{name}.bias": hf_tensors[f"{name}.bias"] for name in CONVOLUTIONS}
-    for index in range(ENCODER_CONFIG.num_layers):
+    for index in range(ENCODER_CONFIG.encoder_layers):
         layer, hf_layer = f"transformer.layers.{index}.", f"layers.{index}."
         for suffix in ("weight", "bias"):
             qkv = [hf_tensors[f"{hf_layer}self_attn.{p}_proj.{suffix}"] for p in "qkv"]
@@ -106,10 +106,10 @@ def build_reference() -> HFEncoder:
     torch.manual_seed(0)
     hf_config = HFEncoderConfig(
         num_mel_bins=ENCODER_CONFIG.num_mel_bins,
-        d_model=ENCODER_CONFIG.hidden_size,
-        encoder_layers=ENCODER_CONFIG.num_layers,
-        encoder_attention_heads=ENCODER_CONFIG.num_attention_heads,
-        encoder_ffn_dim=ENCODER_CONFIG.ffn_hidden_size,
+        d_model=ENCODER_CONFIG.d_model,
+        encoder_layers=ENCODER_CONFIG.encoder_layers,
+        encoder_attention_heads=ENCODER_CONFIG.encoder_attention_heads,
+        encoder_ffn_dim=ENCODER_CONFIG.encoder_ffn_dim,
         downsample_hidden_size=ENCODER_CONFIG.downsample_hidden_size,
         n_window=ENCODER_CONFIG.n_window,
         n_window_infer=ENCODER_CONFIG.n_window_infer,
@@ -326,16 +326,16 @@ class InvalidConfig:
     "invalid",
     [
         pytest.param(
-            InvalidConfig({"num_attention_heads": 3}, "hidden_size=64 is not a multiple"),
-            id="hidden-not-multiple-of-heads",
+            InvalidConfig({"encoder_attention_heads": 3}, "d_model=64 is not a multiple"),
+            id="d-model-not-multiple-of-heads",
         ),
         *[
             pytest.param(InvalidConfig({name: 0}, f"{name} must be at least 1"), id=f"no-{name}")
             for name in (
                 "num_mel_bins",
-                "num_layers",
-                "num_attention_heads",
-                "ffn_hidden_size",
+                "encoder_layers",
+                "encoder_attention_heads",
+                "encoder_ffn_dim",
                 "downsample_hidden_size",
                 "n_window",
             )
@@ -349,16 +349,18 @@ class InvalidConfig:
             id="no-window",
         ),
         pytest.param(
-            InvalidConfig({"activation": "swish"}, "activation='swish' is not one of"),
+            InvalidConfig(
+                {"activation_function": "swish"}, "activation_function='swish' is not one of"
+            ),
             id="unknown-activation",
         ),
         pytest.param(
-            InvalidConfig({"hidden_size": 65}, "hidden_size must be an even number"),
-            id="odd-hidden-size",
+            InvalidConfig({"d_model": 65}, "d_model must be an even number"),
+            id="odd-d-model",
         ),
         pytest.param(
-            InvalidConfig({"hidden_size": 2}, "hidden_size must be an even number"),
-            id="hidden-size-two",
+            InvalidConfig({"d_model": 2}, "d_model must be an even number"),
+            id="d-model-two",
         ),
     ],
 )
@@ -381,10 +383,10 @@ class UnsplittableConfig:
     "unsplittable",
     [
         pytest.param(
-            UnsplittableConfig(3, {}, "num_attention_heads=4 cannot be split"), id="heads"
+            UnsplittableConfig(3, {}, "encoder_attention_heads=4 cannot be split"), id="heads"
         ),
         pytest.param(
-            UnsplittableConfig(2, {"ffn_hidden_size": 129}, "ffn_hidden_size=129 cannot be split"),
+            UnsplittableConfig(2, {"encoder_ffn_dim": 129}, "encoder_ffn_dim=129 cannot be split"),
             id="ffn",
         ),
     ],
