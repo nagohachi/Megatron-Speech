@@ -101,23 +101,47 @@ def run_reference(
     return x
 
 
+@pytest.fixture(name="reference_output")
+def run_reference_layers(
+    reference: list[torch.nn.Linear], projector_config: MLPProjectorConfig, inputs: torch.Tensor
+) -> torch.Tensor:
+    """Run the reference layers on the input without gradients."""
+    with torch.no_grad():
+        return run_reference(reference, inputs, projector_config.activation)
+
+
+@pytest.fixture(name="projector_output")
+def run_projector(
+    projector: MLPProjector, inputs: torch.Tensor, dtype: torch.dtype
+) -> torch.Tensor:
+    """Run the projector under test on the input in its dtype without gradients."""
+    with torch.no_grad():
+        return projector(inputs.to(dtype))
+
+
+def test_output_shape_matches_torch(
+    projector_output: torch.Tensor, reference_output: torch.Tensor
+) -> None:
+    """Check that the projector output has the shape of the reference layers' output."""
+    assert projector_output.shape == reference_output.shape
+
+
+def test_output_has_parameter_dtype(projector_output: torch.Tensor, dtype: torch.dtype) -> None:
+    """Check that the projector output has the dtype of the projector's parameters."""
+    assert projector_output.dtype == dtype
+
+
 def test_output_matches_torch(
-    projector: MLPProjector,
-    reference: list[torch.nn.Linear],
+    projector_output: torch.Tensor,
+    reference_output: torch.Tensor,
     projector_config: MLPProjectorConfig,
-    inputs: torch.Tensor,
     dtype: torch.dtype,
 ) -> None:
     """Check that the projector output equals the reference layers' output."""
-    with torch.no_grad():
-        expected = run_reference(reference, inputs, projector_config.activation)
-        actual = projector(inputs.to(dtype))
-    error = calc_relative_error(actual, expected)
+    error = calc_relative_error(projector_output, reference_output)
     logger.info(
         "layers=%d %s: output max relative error %.2e", projector_config.num_layers, dtype, error
     )
-    assert actual.shape == (10, 64)
-    assert actual.dtype == dtype
     assert error < TOLERANCES[dtype]
 
 

@@ -257,21 +257,33 @@ def test_rejects_batch_without_frames(lengths: list[int]) -> None:
         Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG)
 
 
+@pytest.fixture(name="hf_output")
+def run_hf_encoder(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tensor:
+    """Run the Hugging Face encoder on the test utterances without gradients."""
+    with torch.no_grad():
+        return run_reference(reference, mels)
+
+
+@pytest.fixture(name="encoder_output")
+def run_encoder(encoder: Qwen3ASREncoder, inputs: Qwen3ASREncoderInputs) -> torch.Tensor:
+    """Run the encoder under test on the test utterances without gradients."""
+    with torch.no_grad():
+        return encoder(**vars(inputs))
+
+
+@pytest.mark.gpu
+def test_output_shape_matches_hf(encoder_output: torch.Tensor, hf_output: torch.Tensor) -> None:
+    """Check that the encoder output has the shape of Hugging Face's."""
+    assert encoder_output.shape == hf_output.shape
+
+
 @pytest.mark.gpu
 def test_output_matches_hf(
-    encoder: Qwen3ASREncoder,
-    reference: HFEncoder,
-    mels: list[torch.Tensor],
-    inputs: Qwen3ASREncoderInputs,
-    dtype: torch.dtype,
+    encoder_output: torch.Tensor, hf_output: torch.Tensor, dtype: torch.dtype
 ) -> None:
     """Check that the encoder output equals Hugging Face's for the same utterances."""
-    with torch.no_grad():
-        expected = run_reference(reference, mels)
-        actual = encoder(**vars(inputs))
-    error = calc_relative_error(actual, expected)
+    error = calc_relative_error(encoder_output, hf_output)
     logger.info("%s: output max relative error %.2e", dtype, error)
-    assert actual.shape == expected.shape
     assert error < TOLERANCES[dtype]
 
 

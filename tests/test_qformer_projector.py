@@ -205,23 +205,43 @@ def run_reference(
     return output.reshape(-1, output.shape[-1])
 
 
+@pytest.fixture(name="reference_output")
+def run_hf_qformer(
+    reference: Reference, projector_config: QFormerProjectorConfig, frames: torch.Tensor
+) -> torch.Tensor:
+    """Run the Hugging Face Q-Former and the projection on the frames without gradients."""
+    with torch.no_grad():
+        return run_reference(reference, frames, projector_config.window_size)
+
+
+@pytest.fixture(name="projector_output")
+def run_projector(
+    projector: QFormerProjector, frames: torch.Tensor, dtype: torch.dtype
+) -> torch.Tensor:
+    """Run the projector under test on the frames in its dtype without gradients."""
+    cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
+    with torch.no_grad():
+        return projector(frames.to(dtype), cu_seqlens)
+
+
+def test_output_shape_matches_hf(
+    projector_output: torch.Tensor, reference_output: torch.Tensor
+) -> None:
+    """Check that the projector output has the shape of the reference output."""
+    assert projector_output.shape == reference_output.shape
+
+
 def test_output_matches_hf(
-    projector: QFormerProjector,
-    reference: Reference,
+    projector_output: torch.Tensor,
+    reference_output: torch.Tensor,
     projector_config: QFormerProjectorConfig,
-    frames: torch.Tensor,
     dtype: torch.dtype,
 ) -> None:
     """Check that the output equals the Hugging Face Q-Former followed by the projection."""
-    cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
-    with torch.no_grad():
-        expected = run_reference(reference, frames, projector_config.window_size)
-        actual = projector(frames.to(dtype), cu_seqlens)
-    error = calc_relative_error(actual, expected)
+    error = calc_relative_error(projector_output, reference_output)
     logger.info(
         "%s %s: output max relative error %.2e", describe_config(projector_config), dtype, error
     )
-    assert actual.shape == expected.shape
     assert error < TOLERANCES[dtype]
 
 
