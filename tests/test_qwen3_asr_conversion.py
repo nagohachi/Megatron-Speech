@@ -26,7 +26,11 @@ from megatron_speech.models.speech_llm import (
     build_speech_llm,
 )
 from tests.hf_audio_inputs import build_hf_audio_inputs
-from tests.hf_checkpoint import check_export_restores_hf_weights, save_hf_checkpoint
+from tests.hf_reference import (
+    check_export_restores_hf_weights,
+    randomize_norms,
+    save_hf_checkpoint,
+)
 from tests.numerical_error import TOLERANCES, calc_relative_error
 
 pytestmark = pytest.mark.gpu
@@ -122,11 +126,7 @@ def build_hf_checkpoint(tmp_path: Path, tensor_parallel_size: int) -> Path:
     """
     torch.manual_seed(0)
     model = Qwen3ASRForConditionalGeneration(HF_CONFIG)
-    with torch.no_grad():  # norms away from (1, 0), so that a missed copy shows
-        for name, param in model.named_parameters():
-            if "norm" not in name and "ln_post" not in name:
-                continue
-            param.normal_(mean=1.0 if name.endswith("weight") else 0.0, std=0.1)
+    randomize_norms(model, ("norm", "ln_post"))
     return save_hf_checkpoint(model, tmp_path)
 
 

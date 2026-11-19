@@ -12,7 +12,11 @@ from transformers import Qwen3Config, Qwen3ForCausalLM
 
 from megatron_speech.conversion.bridge import MappingBridge
 from megatron_speech.models.language_model import SpeechLanguageModel
-from tests.hf_checkpoint import check_export_restores_hf_weights, save_hf_checkpoint
+from tests.hf_reference import (
+    check_export_restores_hf_weights,
+    randomize_norms,
+    save_hf_checkpoint,
+)
 from tests.numerical_error import TOLERANCES, calc_relative_error
 
 pytestmark = pytest.mark.gpu
@@ -42,11 +46,7 @@ def build_hf_checkpoint(tmp_path: Path, tensor_parallel_size: int) -> Path:
     """
     torch.manual_seed(0)
     model = Qwen3ForCausalLM(HF_CONFIG)
-    with torch.no_grad():  # RMSNorm weights away from 1, so that a missed copy shows
-        for name, param in model.named_parameters():
-            if "norm" not in name:
-                continue
-            param.normal_(mean=1.0, std=0.1)
+    randomize_norms(model, ("norm",))
     return save_hf_checkpoint(model, tmp_path)
 
 

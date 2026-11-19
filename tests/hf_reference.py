@@ -39,3 +39,16 @@ def check_export_restores_hf_weights(
         for name, tensor in exported.items():
             assert tensor.dtype == dtype, name
             assert torch.equal(tensor, hf_pretrained.state[name].to(dtype)), name
+
+
+def randomize_norms(model: torch.nn.Module, name_parts: tuple[str, ...]) -> None:
+    """Draw the norm weights of ``model`` around 1 and the norm biases around 0 (std 0.1).
+
+    A norm parameter is one whose name contains one of ``name_parts``. A conversion or copy that
+    misses a norm then changes the outputs, which it would not with the initial 1 and 0.
+    """
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            if not any(part in name for part in name_parts):
+                continue
+            param.normal_(mean=1.0 if name.endswith("weight") else 0.0, std=0.1)

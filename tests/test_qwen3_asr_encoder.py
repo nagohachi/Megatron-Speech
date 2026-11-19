@@ -22,6 +22,7 @@ from megatron_speech.components.encoders.qwen3_asr import (
     Qwen3ASREncoderInputs,
 )
 from tests.hf_audio_inputs import build_hf_audio_inputs
+from tests.hf_reference import randomize_norms
 from tests.numerical_error import TOLERANCES, calc_relative_error
 from tests.tensor_parallel_shard import take_shard
 
@@ -111,10 +112,7 @@ def build_reference() -> HFEncoder:
     )
     hf_config._attn_implementation = "eager"
     reference = HFEncoder(hf_config).cuda()
-    with torch.no_grad():  # LayerNorms away from (1, 0), so that a missed copy shows
-        for name, param in reference.named_parameters():
-            if "layer_norm" in name or "ln_post" in name:
-                param.normal_(mean=1.0 if name.endswith("weight") else 0.0, std=0.1)
+    randomize_norms(reference, ("layer_norm", "ln_post"))
     return reference
 
 
