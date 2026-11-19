@@ -28,8 +28,10 @@ logger = logging.getLogger(__name__)
 # Mel frames of each utterance: several chunks and windows, no frames, one chunk, a partial
 # chunk and one frame.
 UTTERANCE_LENGTHS = [250, 0, 100, 37, 1]
-# Names of the convolutions and the linear layer after them, the same on both sides.
-CONVOLUTIONS = ("conv2d1", "conv2d2", "conv2d3", "conv_out")
+# Names of the convolutions and of the linear layer after them, the same on both sides. The
+# linear layer has no bias.
+CONVOLUTIONS = ("conv2d1", "conv2d2", "conv2d3")
+CONV_OUT = "conv_out"
 # Windows of 200 mel frames (26 encoder frames) so that the 250-frame utterance spans two.
 ENCODER_CONFIG = Qwen3ASREncoderConfig(
     num_mel_bins=32,
@@ -57,8 +59,8 @@ def map_hf_tensors(hf_tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tenso
         heads = [t.reshape(num_heads, -1, *t.shape[1:]) for t in (query, key, value)]
         return torch.cat(heads, dim=1).reshape(-1, *query.shape[1:])
 
-    mapped = {f"{name}.weight": hf_tensors[f"{name}.weight"] for name in CONVOLUTIONS}
-    mapped |= {f"{name}.bias": hf_tensors[f"{name}.bias"] for name in CONVOLUTIONS[:3]}
+    mapped = {f"{name}.weight": hf_tensors[f"{name}.weight"] for name in (*CONVOLUTIONS, CONV_OUT)}
+    mapped |= {f"{name}.bias": hf_tensors[f"{name}.bias"] for name in CONVOLUTIONS}
     for index in range(ENCODER_CONFIG.num_layers):
         layer, hf_layer = f"transformer.layers.{index}.", f"layers.{index}."
         for suffix in ("weight", "bias"):
