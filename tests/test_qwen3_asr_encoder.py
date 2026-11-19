@@ -42,20 +42,19 @@ ENCODER_CONFIG = Qwen3ASREncoderConfig(
 )
 
 
-def interleave_qkv(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
-    """Concatenate q, k and v head by head, as Megatron's fused ``linear_qkv`` stores them."""
-    heads = [
-        t.reshape(ENCODER_CONFIG.num_attention_heads, -1, *t.shape[1:]) for t in (query, key, value)
-    ]
-    return torch.cat(heads, dim=1).reshape(-1, *query.shape[1:])
-
-
 def map_hf_tensors(hf_tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     """Map Hugging Face weights or gradients to the encoder's parameter names, before splitting.
 
     The encoder's names come from Megatron's layers (``transformer.layers.0.self_attention.
     linear_qkv.weight``); only they tell which fused weight holds which Hugging Face weights.
     """
+
+    def interleave_qkv(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+        """Concatenate q, k and v head by head, as Megatron's fused ``linear_qkv`` stores them."""
+        num_heads = ENCODER_CONFIG.num_attention_heads
+        heads = [t.reshape(num_heads, -1, *t.shape[1:]) for t in (query, key, value)]
+        return torch.cat(heads, dim=1).reshape(-1, *query.shape[1:])
+
     mapped = {f"{name}.weight": hf_tensors[f"{name}.weight"] for name in CONVOLUTIONS}
     mapped |= {f"{name}.bias": hf_tensors[f"{name}.bias"] for name in CONVOLUTIONS[:3]}
     for index in range(ENCODER_CONFIG.num_layers):
