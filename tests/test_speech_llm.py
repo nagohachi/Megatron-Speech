@@ -369,3 +369,21 @@ def test_rejects_llm_without_vocab_size(config: SpeechLLMConfig) -> None:
     config = replace(config, llm=replace(config.llm, vocab_size=None))
     with pytest.raises(ValueError, match=r"llm\.vocab_size is not set"):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
+
+
+def test_rejects_vocab_size_not_divisible_by_tp(
+    config: SpeechLLMConfig, tensor_parallel_size: int
+) -> None:
+    """Check that a vocabulary that TP cannot split, without padding, raises ValueError."""
+    if tensor_parallel_size == 1:
+        pytest.skip("every vocabulary splits over one rank")
+    config = replace(config, llm=replace(config.llm, vocab_size=VOCAB_SIZE - 1))
+    with pytest.raises(ValueError, match=r"llm\.vocab_size=127 cannot be split"):
+        build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
+
+
+def test_rejects_audio_token_outside_vocabulary(config: SpeechLLMConfig) -> None:
+    """Check that an ``audio_token_id`` past the end of the vocabulary raises ValueError."""
+    config = replace(config, audio_token_id=VOCAB_SIZE)
+    with pytest.raises(ValueError, match="audio_token_id=128 is outside the vocabulary"):
+        build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())

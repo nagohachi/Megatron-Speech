@@ -58,6 +58,17 @@ def build_speech_llm(config: SpeechLLMConfig, pg_collection: ProcessGroupCollect
             )
         if llm.vocab_size is None:
             raise ValueError("llm.vocab_size is not set")
+        tp_size = transformer.tensor_model_parallel_size
+        if not llm.should_pad_vocab and llm.vocab_size % tp_size:
+            raise ValueError(
+                f"llm.vocab_size={llm.vocab_size} cannot be split over {tp_size} tensor parallel "
+                "ranks; set llm.should_pad_vocab to pad it"
+            )
+        if not 0 <= config.audio_token_id < llm.vocab_size:
+            raise ValueError(
+                f"audio_token_id={config.audio_token_id} is outside the vocabulary of "
+                f"llm.vocab_size={llm.vocab_size} tokens"
+            )
 
     def build_audio_spec() -> ModuleSpec:
         """Build the spec of the audio modality: the encoder and the projector."""
