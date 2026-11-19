@@ -86,8 +86,8 @@ class SpeechLanguageModel(GPTModel):
             )
         num_positions, batch_size, hidden_size = hidden_states.shape
         # Indices of the target positions in the flattened [sequence, batch] order.
-        index = loss_mask.transpose(0, 1).reshape(-1).nonzero(as_tuple=True)[0]
-        target_hidden_states = hidden_states.reshape(-1, hidden_size)[index].unsqueeze(1)
+        target_indices = loss_mask.transpose(0, 1).reshape(-1).nonzero(as_tuple=True)[0]
+        target_hidden_states = hidden_states.reshape(-1, hidden_size)[target_indices].unsqueeze(1)
         output_layer.sequence_parallel = False
         try:
             logits, _ = output_layer(
@@ -97,7 +97,9 @@ class SpeechLanguageModel(GPTModel):
             )
         finally:
             output_layer.sequence_parallel = sequence_parallel
-        target_labels = labels.transpose(0, 1).reshape(-1)[index].unsqueeze(0)
+        target_labels = labels.transpose(0, 1).reshape(-1)[target_indices].unsqueeze(0)
         target_loss = compute_language_model_loss(target_labels, scale_logits(logits)).reshape(-1)
-        loss = target_loss.new_zeros(num_positions * batch_size).index_put((index,), target_loss)
+        loss = target_loss.new_zeros(num_positions * batch_size).index_put(
+            (target_indices,), target_loss
+        )
         return loss.view(num_positions, batch_size).transpose(0, 1).contiguous()
