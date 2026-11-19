@@ -52,12 +52,6 @@ def build_hf_checkpoint(tmp_path: Path, tensor_parallel_size: int) -> Path:
     return paths[0]
 
 
-@pytest.fixture(name="reference")
-def build_reference(hf_dir: Path) -> Qwen3ForCausalLM:
-    """Load the Hugging Face Qwen3 in fp32."""
-    return Qwen3ForCausalLM.from_pretrained(hf_dir, dtype=torch.float32).cuda().eval()
-
-
 @pytest.fixture(name="bridge")
 def build_bridge() -> MappingBridge:
     """Build a bridge with Megatron-Bridge's mapping table of Qwen3."""
@@ -102,10 +96,9 @@ def build_model(
     return model
 
 
-def test_logits_match_hf(
-    model: SpeechLanguageModel, reference: Qwen3ForCausalLM, dtype: torch.dtype
-) -> None:
+def test_logits_match_hf(model: SpeechLanguageModel, hf_dir: Path, dtype: torch.dtype) -> None:
     """Check that the model with the loaded weights gives the Hugging Face model's logits."""
+    reference = Qwen3ForCausalLM.from_pretrained(hf_dir, dtype=torch.float32).cuda().eval()
     torch.manual_seed(1)
     input_ids = torch.randint(HF_CONFIG.vocab_size, (1, SEQUENCE_LENGTH), device="cuda")
     position_ids = torch.arange(SEQUENCE_LENGTH, device="cuda")[None]
