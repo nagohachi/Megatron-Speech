@@ -169,8 +169,8 @@ class Qwen3ASREncoderInputs:
             max_seqlen=max(window_lengths),
         )
 
-    def to(self, device: torch.device | str) -> Self:
-        """Return a copy of the inputs with the tensors moved to ``device``."""
+    def copy_to(self, device: torch.device | str) -> Self:
+        """Return a copy of the inputs with the tensors on ``device``."""
         return replace(
             self,
             input_features=self.input_features.to(device),
