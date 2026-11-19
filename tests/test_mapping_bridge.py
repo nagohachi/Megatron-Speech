@@ -28,7 +28,7 @@ HF_CONFIG = Qwen3Config(
     max_position_embeddings=64,
     tie_word_embeddings=True,
 )
-SEQUENCE_LENGTH = 16
+NUM_TOKENS = 16
 
 
 @pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
@@ -113,8 +113,8 @@ def test_logits_match_hf(
 ) -> None:
     """Check that the model with the loaded weights gives the Hugging Face model's logits."""
     torch.manual_seed(1)
-    input_ids = torch.randint(HF_CONFIG.vocab_size, (1, SEQUENCE_LENGTH), device="cuda")
-    position_ids = torch.arange(SEQUENCE_LENGTH, device="cuda")[None]
+    input_ids = torch.randint(HF_CONFIG.vocab_size, (1, NUM_TOKENS), device="cuda")
+    position_ids = torch.arange(NUM_TOKENS, device="cuda")[None]
     with torch.no_grad():
         expected = reference(input_ids).logits
         # The logits are split over the TP ranks along the vocabulary.
