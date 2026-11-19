@@ -1,7 +1,7 @@
+import math
 from dataclasses import dataclass, replace
 from typing import Self
 
-import numpy as np
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.packed_seq_params import PackedSeqParams
@@ -219,7 +219,7 @@ class Qwen3ASREncoder(MegatronModule):
             The embedding is ``[encoder_frames_per_chunk, hidden_size]``.
             """
             num_channels = encoder_config.hidden_size
-            log_timescale_increment = np.log(10000.0) / (num_channels // 2 - 1)
+            log_timescale_increment = math.log(10000.0) / (num_channels // 2 - 1)
             inv_timescales = torch.exp(-log_timescale_increment * torch.arange(num_channels // 2))
             positions = torch.arange(encoder_config.encoder_frames_per_chunk)
             scaled_time = positions[:, None] * inv_timescales
