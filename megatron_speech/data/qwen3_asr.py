@@ -50,8 +50,6 @@ class Qwen3ASRExampleBuilder:
         self.feature_extractor = processor.feature_extractor
         self.encoder_config = encoder_config
         self.audio_token_id = processor.audio_token_id
-        self.language = language
-        self.force_language = force_language
         # The prompt holds one audio token, which each example replaces with its own count.
         # With tokenize=False, Hugging Face does not read the audio.
         prompt = processor.apply_transcription_request(
