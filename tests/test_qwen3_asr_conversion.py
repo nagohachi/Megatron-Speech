@@ -158,7 +158,6 @@ def save_loaded_model(model: MimoModel, hf_dir: Path, tmp_path: Path) -> Path:
         (hf_dir / "preprocessor_config.json").write_text(PREPROCESSOR_CONFIG)
     saved_dir = take_rank0_path(tmp_path / "saved")
     BRIDGE.save_hf_checkpoint([model], PreTrainedCausalLM.from_pretrained(hf_dir), saved_dir)
-    torch.distributed.barrier()
     return saved_dir
 
 

@@ -41,10 +41,13 @@ class MappingBridge(MegatronModelBridge):
         - Other files: the config, tokenizer and processor files of ``hf_pretrained``.
 
         Every rank calls this, since gathering the weights over the tensor parallel ranks is
-        collective; rank 0 writes the files.
+        collective; rank 0 writes the files, and every rank returns once they are written.
         """
         if torch.distributed.get_rank() == 0:
             hf_pretrained.save_artifacts(path, additional_files=NON_WEIGHT_FILES)
+        # The writer that Megatron-Bridge's AutoBridge.save_hf_weights also calls. AutoBridge
+        # itself picks Megatron-Bridge's own table for the architecture, not this bridge's.
         hf_pretrained.state.source.save_generator(
             self.stream_weights_megatron_to_hf(models, hf_pretrained, show_progress=False), path
         )
+        torch.distributed.barrier()
