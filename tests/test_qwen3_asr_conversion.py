@@ -124,8 +124,9 @@ def build_hf_checkpoint(tmp_path: Path, tensor_parallel_size: int) -> Path:
     model = Qwen3ASRForConditionalGeneration(HF_CONFIG)
     with torch.no_grad():  # norms away from (1, 0), so that a missed copy shows
         for name, param in model.named_parameters():
-            if "norm" in name or "ln_post" in name:
-                param.normal_(mean=1.0 if name.endswith("weight") else 0.0, std=0.1)
+            if "norm" not in name and "ln_post" not in name:
+                continue
+            param.normal_(mean=1.0 if name.endswith("weight") else 0.0, std=0.1)
     return save_hf_checkpoint(model, tmp_path)
 
 
