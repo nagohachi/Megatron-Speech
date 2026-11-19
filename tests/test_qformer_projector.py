@@ -66,12 +66,6 @@ def get_projector_config(request: pytest.FixtureRequest) -> QFormerProjectorConf
     return request.param
 
 
-@pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
-def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Return the parameter dtype of the projector under test."""
-    return request.param
-
-
 @pytest.fixture(name="reference")
 def build_reference(projector_config: QFormerProjectorConfig) -> Reference:
     """Build random reference weights, the same on every rank."""

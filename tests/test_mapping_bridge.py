@@ -31,12 +31,6 @@ HF_CONFIG = Qwen3Config(
 SEQUENCE_LENGTH = 16
 
 
-@pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
-def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Return the parameter dtype of the model under test."""
-    return request.param
-
-
 @pytest.fixture(name="hf_dir")
 def build_hf_checkpoint(tmp_path: Path, tensor_parallel_size: int) -> Path:
     """Save a Qwen3 with random weights as a Hugging Face checkpoint that every rank reads.
