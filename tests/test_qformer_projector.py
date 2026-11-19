@@ -134,8 +134,8 @@ def map_hf_tensors(
     return mapped
 
 
-def get_split_dim(name: str) -> int | None:
-    """Return the dim of the projector parameter ``name`` that TP splits, if any."""
+def calc_split_dim(name: str) -> int | None:
+    """Calculate the dim of the projector parameter ``name`` that TP splits, if any."""
     column_parallel = ("query", "key", "value", "fc1", "projection")
     if name.endswith(
         tuple(f"{layer}.{s}" for layer in column_parallel for s in ("weight", "bias"))
@@ -170,7 +170,7 @@ def build_projector(
     assert hf_weights.keys() == projector_parameters.keys()
     with torch.no_grad():
         for name, weight in hf_weights.items():
-            shard = take_shard(weight, get_split_dim(name))
+            shard = take_shard(weight, calc_split_dim(name))
             assert projector_parameters[name].shape == shard.shape
             projector_parameters[name].copy_(shard)
     return projector
@@ -272,7 +272,7 @@ def test_gradients_match_hf(
         # The key bias adds the same value to every score of a query, which softmax ignores,
         # so its true gradient is zero and both sides hold only rounding errors.
         "parameters": max(
-            calc_relative_error(param.grad, take_shard(hf_gradients[name], get_split_dim(name)))
+            calc_relative_error(param.grad, take_shard(hf_gradients[name], calc_split_dim(name)))
             for name, param in projector.named_parameters()
             if not name.endswith("key.bias")
         ),

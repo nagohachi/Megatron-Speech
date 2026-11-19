@@ -50,8 +50,8 @@ def build_reference(projector_config: MLPProjectorConfig) -> list[torch.nn.Linea
     return [torch.nn.Linear(n_in, n_out).cuda() for n_in, n_out in pairwise(sizes)]
 
 
-def get_split_dim(index: int) -> int:
-    """Return the weight dim that layer ``index`` splits: output (0) or input features (1)."""
+def calc_split_dim(index: int) -> int:
+    """Calculate the weight dim that layer ``index`` splits: output (0) or input (1)."""
     return 0 if index % 2 == 0 else 1
 
 
@@ -75,7 +75,7 @@ def build_projector(
     projector = MLPProjector(projector_config, llm_config, pg_collection).cuda()
     with torch.no_grad():
         for index, (layer, ref) in enumerate(zip(projector.layers, reference, strict=True)):
-            dim = get_split_dim(index)
+            dim = calc_split_dim(index)
             weight = take_shard(ref.weight, dim)
             assert layer.weight.shape == weight.shape
             layer.weight.copy_(weight)
@@ -162,7 +162,7 @@ def test_gradients_match_torch(
 
     errors = {"input": calc_relative_error(projector_inputs.grad, inputs.grad)}
     for index, (layer, ref) in enumerate(zip(projector.layers, reference, strict=True)):
-        target = take_shard(ref.weight.grad, get_split_dim(index))
+        target = take_shard(ref.weight.grad, calc_split_dim(index))
         errors[f"layer {index} weight"] = calc_relative_error(layer.weight.grad, target)
     logger.info(
         "layers=%d %s: gradient max relative error %s",

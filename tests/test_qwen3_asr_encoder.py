@@ -84,8 +84,8 @@ def map_hf_tensors(hf_tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tenso
     return mapped
 
 
-def get_split_dim(name: str) -> int | None:
-    """Return the dim of the encoder parameter ``name`` that TP splits, if any."""
+def calc_split_dim(name: str) -> int | None:
+    """Calculate the dim of the encoder parameter ``name`` that TP splits, if any."""
     if name.endswith(
         ("linear_qkv.weight", "linear_qkv.bias", "linear_fc1.weight", "linear_fc1.bias")
     ):
@@ -144,7 +144,7 @@ def build_encoder(
     assert hf_weights.keys() == encoder_parameters.keys()
     with torch.no_grad():
         for name, weight in hf_weights.items():
-            shard = take_shard(weight, get_split_dim(name))
+            shard = take_shard(weight, calc_split_dim(name))
             assert encoder_parameters[name].shape == shard.shape
             encoder_parameters[name].copy_(shard)
     return encoder
@@ -308,7 +308,7 @@ def test_gradients_match_hf(
 
     hf_gradients = map_hf_tensors({name: p.grad for name, p in reference.named_parameters()})
     errors = [
-        calc_relative_error(param.grad, take_shard(hf_gradients[name], get_split_dim(name)))
+        calc_relative_error(param.grad, take_shard(hf_gradients[name], calc_split_dim(name)))
         for name, param in encoder.named_parameters()
     ]
     logger.info("%s: weight gradient max relative error %.2e", dtype, max(errors))
