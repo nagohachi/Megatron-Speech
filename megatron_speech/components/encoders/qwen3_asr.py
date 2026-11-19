@@ -44,8 +44,16 @@ class Qwen3ASREncoderConfig:
 
     def __post_init__(self) -> None:
         """Raise ValueError for shapes that the encoder or its inputs cannot use."""
-        if self.n_window < 1:
-            raise ValueError(f"n_window must be at least 1, got {self.n_window}")
+        for name in (
+            "num_mel_bins",
+            "num_layers",
+            "num_attention_heads",
+            "ffn_hidden_size",
+            "downsample_hidden_size",
+            "n_window",
+        ):
+            if getattr(self, name) < 1:
+                raise ValueError(f"{name} must be at least 1, got {getattr(self, name)}")
         if (
             self.n_window_infer < self.mel_frames_per_chunk
             or self.n_window_infer % self.mel_frames_per_chunk

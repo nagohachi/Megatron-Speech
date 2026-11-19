@@ -326,9 +326,17 @@ class InvalidConfig:
             InvalidConfig({"num_attention_heads": 3}, "hidden_size=64 is not a multiple"),
             id="hidden-not-multiple-of-heads",
         ),
-        pytest.param(
-            InvalidConfig({"n_window": 0}, "n_window must be at least 1"), id="no-chunk-frames"
-        ),
+        *[
+            pytest.param(InvalidConfig({name: 0}, f"{name} must be at least 1"), id=f"no-{name}")
+            for name in (
+                "num_mel_bins",
+                "num_layers",
+                "num_attention_heads",
+                "ffn_hidden_size",
+                "downsample_hidden_size",
+                "n_window",
+            )
+        ],
         pytest.param(
             InvalidConfig({"n_window_infer": 150}, "n_window_infer=150 must be a positive"),
             id="window-not-multiple-of-chunk",
