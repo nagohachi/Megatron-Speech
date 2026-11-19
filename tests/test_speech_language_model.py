@@ -201,11 +201,15 @@ def test_returns_logits_without_labels(
 
 
 @pytest.mark.parametrize("targets", ["none"])
-def test_accepts_batch_without_targets(model: SpeechLanguageModel, batch: Batch) -> None:
-    """Check that a batch without target positions gives a loss of 0 and gradients of 0."""
-    loss = run_model(model, batch)
-    assert torch.all(loss == 0)
-    (loss * batch.loss_mask).sum().backward()
+def test_loss_is_zero_without_targets(model_loss: torch.Tensor) -> None:
+    """Check that a batch without target positions gives a loss of 0 at every position."""
+    assert torch.all(model_loss == 0)
+
+
+@pytest.mark.parametrize("targets", ["none"])
+def test_gradients_are_zero_without_targets(model: SpeechLanguageModel, batch: Batch) -> None:
+    """Check that a batch without target positions gives every parameter a gradient of 0."""
+    (run_model(model, batch) * batch.loss_mask).sum().backward()
     for name, param in model.named_parameters():
         assert param.grad is not None, name
         assert torch.all(param.grad == 0), name
