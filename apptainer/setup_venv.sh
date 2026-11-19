@@ -43,12 +43,21 @@ source .venv/bin/activate
 SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 echo "$MLM" > "$SITE/megatron_lm.pth"
 
+# Megatron-Bridge supplies the rules that convert weights between Hugging Face and Megatron.
+# --no-deps: its dependencies include the megatron-core package, a second megatron.core.
+MEGATRON_BRIDGE_COMMIT=16595bbdc5242a8d27505b19f3ea32e8ae2ed428
+"$UV" pip install --no-deps \
+    "megatron-bridge @ https://github.com/NVIDIA-NeMo/Megatron-Bridge/archive/$MEGATRON_BRIDGE_COMMIT.tar.gz"
+
 python - <<'PY'
+from importlib.metadata import version
 import torch, transformer_engine, transformers, lhotse
 import megatron.core, megatron.training
+import megatron.bridge.models.conversion.param_mapping
 print("torch", torch.__version__)
 print("transformer_engine", transformer_engine.__version__)
 print("megatron.core", megatron.core.__version__)
+print("megatron.bridge", version("megatron-bridge"))
 print("transformers", transformers.__version__)
 print("lhotse", lhotse.__version__)
 PY

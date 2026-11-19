@@ -55,3 +55,5 @@ docs/                       文書
 ## 上流の更新
 
 Megatron-LM の固定コミットは月に 1 回程度まとめて進める。進めるときは `git -C third_party/Megatron-LM checkout <commit>` のあと、テストを流して損失が一致することを確かめてからコミットする。
+
+Megatron-Bridge（HF と Megatron の重みの変換規則に使う）は、`apptainer/setup_venv.sh` の `MEGATRON_BRIDGE_COMMIT` で固定している。Megatron-LM を進めるときは、Megatron-Bridge も、その Megatron-LM に近いコミットを固定している版に進める。
