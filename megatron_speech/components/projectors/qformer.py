@@ -14,41 +14,32 @@ from megatron_speech.components.transformer_config import build_component_transf
 class QFormerProjectorConfig:
     """Shape of ``QFormerProjector``.
 
-    Fields that Hugging Face's ``Blip2QFormerConfig`` also has, with its names:
-
-    - ``input_size``: ``encoder_hidden_size`` (the encoder's output size)
-    - ``hidden_size``: ``hidden_size``
-    - ``num_layers``: ``num_hidden_layers``
-    - ``num_attention_heads``: ``num_attention_heads``
-    - ``ffn_hidden_size``: ``intermediate_size``
-    - ``cross_attention_frequency``: ``cross_attention_frequency``
-    - ``activation``: ``hidden_act``
-    - ``layernorm_epsilon``: ``layer_norm_eps``
-
-    ``output_size`` is the LLM's hidden size.
+    Fields that Hugging Face also has take its names: those of ``Blip2QFormerConfig``, and
+    ``num_query_tokens`` of ``Blip2Config``. ``encoder_hidden_size`` is the encoder's output
+    size, and ``output_size`` the LLM's hidden size.
 
     Each utterance is cut into windows of ``window_size`` consecutive encoder frames (the last
-    window may be shorter), and ``num_queries`` learned queries attend to the frames of each
-    window. An utterance of ``n`` frames therefore gives ``ceil(n / window_size) * num_queries``
-    output vectors, in proportion to its length.
+    window may be shorter), and ``num_query_tokens`` learned queries attend to the frames of
+    each window. An utterance of ``n`` frames therefore gives
+    ``ceil(n / window_size) * num_query_tokens`` output vectors, in proportion to its length.
 
     With ``window_size=None`` the utterance is not cut: the queries attend to all of its frames
-    at once, and every utterance gives ``num_queries`` output vectors whatever its length. This
-    is how BLIP-2 reads an image.
+    at once, and every utterance gives ``num_query_tokens`` output vectors whatever its length.
+    This is how BLIP-2 reads an image.
     """
 
-    input_size: int
+    encoder_hidden_size: int
     output_size: int
     hidden_size: int = 768
-    num_layers: int = 2
+    num_hidden_layers: int = 2
     num_attention_heads: int = 12
-    ffn_hidden_size: int = 3072
+    intermediate_size: int = 3072
     cross_attention_frequency: int = 1
-    num_queries: int = 1
+    num_query_tokens: int = 1
     # SALMONN's window: round(0.333 s * 50 frames/s) = 17 frames of the Whisper encoder.
     window_size: int | None = 17
-    activation: str = "gelu"
-    layernorm_epsilon: float = 1e-12
+    hidden_act: str = "gelu"
+    layer_norm_eps: float = 1e-12
 
 
 def build_column_parallel_linear(
@@ -163,11 +154,11 @@ class QFormerLayer(MegatronModule):
         hidden_size = config.hidden_size
         self.self_attention = QFormerAttention(config, hidden_size, tp_group)
         self.cross_attention = (
-            QFormerAttention(config, projector_config.input_size, tp_group)
+            QFormerAttention(config, projector_config.encoder_hidden_size, tp_group)
             if has_cross_attention
             else None
         )
-        self.activation_func = ACTIVATIONS[projector_config.activation]
+        self.activation_func = ACTIVATIONS[projector_config.hidden_act]
         self.fc1 = build_column_parallel_linear(
             hidden_size, config.ffn_hidden_size, config, tp_group
         )
@@ -179,7 +170,7 @@ class QFormerLayer(MegatronModule):
     def forward(
         self, queries: torch.Tensor, frames: torch.Tensor, frame_mask: torch.Tensor
     ) -> torch.Tensor:
-        """Update ``[windows, queries, hidden]`` from ``[windows, frames, input_size]``."""
+        """Update ``[windows, queries, hidden]`` from ``[windows, frames, encoder_hidden_size]``."""
         queries = self.self_attention(queries, queries, None)
         if self.cross_attention is not None:
             queries = self.cross_attention(queries, frames, frame_mask)
@@ -215,7 +206,7 @@ class QFormerProjector(MegatronModule):
                 )
             split_sizes = {
                 "num_attention_heads": projector_config.num_attention_heads,
-                "ffn_hidden_size": projector_config.ffn_hidden_size,
+                "intermediate_size": projector_config.intermediate_size,
                 "output_size": projector_config.output_size,
             }
             for name, size in split_sizes.items():
@@ -229,8 +220,8 @@ class QFormerProjector(MegatronModule):
                     f"num_attention_heads={projector_config.num_attention_heads}"
                 )
             counts = {
-                "num_layers": projector_config.num_layers,
-                "num_queries": projector_config.num_queries,
+                "num_hidden_layers": projector_config.num_hidden_layers,
+                "num_query_tokens": projector_config.num_query_tokens,
                 "cross_attention_frequency": projector_config.cross_attention_frequency,
                 # None makes the whole utterance one window.
                 "window_size": 1
@@ -242,14 +233,14 @@ class QFormerProjector(MegatronModule):
                     raise ValueError(f"{name} must be at least 1, got {count}")
 
         def build_query_tokens() -> torch.nn.Parameter:
-            """Build the learned queries ``[num_queries, hidden_size]`` from a normal distribution.
+            """Build ``[num_query_tokens, hidden_size]`` learned queries from a normal distribution.
 
             Hugging Face starts them from zeros, but equal queries get equal gradients and stay
             equal; LAVIS's BLIP-2 draws them from a normal distribution, as done here.
             """
             query_tokens = torch.nn.Parameter(
                 torch.empty(
-                    projector_config.num_queries,
+                    projector_config.num_query_tokens,
                     projector_config.hidden_size,
                     dtype=config.params_dtype,
                 )
@@ -261,11 +252,11 @@ class QFormerProjector(MegatronModule):
         check_config()
         config = build_component_transformer_config(
             llm_config,
-            num_layers=projector_config.num_layers,
+            num_layers=projector_config.num_hidden_layers,
             hidden_size=projector_config.hidden_size,
             num_attention_heads=projector_config.num_attention_heads,
-            ffn_hidden_size=projector_config.ffn_hidden_size,
-            layernorm_epsilon=projector_config.layernorm_epsilon,
+            ffn_hidden_size=projector_config.intermediate_size,
+            layernorm_epsilon=projector_config.layer_norm_eps,
         )
         super().__init__(config=config)
         self.window_size = projector_config.window_size
@@ -273,7 +264,7 @@ class QFormerProjector(MegatronModule):
         self.query_tokens = build_query_tokens()
         self.layernorm = torch.nn.LayerNorm(
             projector_config.hidden_size,
-            eps=projector_config.layernorm_epsilon,
+            eps=projector_config.layer_norm_eps,
             dtype=config.params_dtype,
         )
         self.layers = torch.nn.ModuleList(
@@ -283,7 +274,7 @@ class QFormerProjector(MegatronModule):
                 has_cross_attention=index % projector_config.cross_attention_frequency == 0,
                 tp_group=tp_group,
             )
-            for index in range(projector_config.num_layers)
+            for index in range(projector_config.num_hidden_layers)
         )
         self.projection = build_column_parallel_linear(
             projector_config.hidden_size, projector_config.output_size, config, tp_group
@@ -292,10 +283,10 @@ class QFormerProjector(MegatronModule):
     def forward(self, hidden_states: torch.Tensor, cu_seqlens: torch.Tensor) -> torch.Tensor:
         """Project the encoder frames of the utterances that ``cu_seqlens`` delimits.
 
-        ``hidden_states`` is ``[num_frames, input_size]``, utterance after utterance, and
+        ``hidden_states`` is ``[num_frames, encoder_hidden_size]``, utterance after utterance, and
         ``cu_seqlens`` the ``[num_utterances + 1]`` cumulative frame counts. Each utterance is
         cut into windows of ``window_size`` frames (the last one may be shorter). Returns
-        ``[num_windows * num_queries, output_size]``, utterance by utterance and window by
+        ``[num_windows * num_query_tokens, output_size]``, utterance by utterance and window by
         window. Counting the windows reads the utterance lengths on the host.
         """
         lengths = cu_seqlens[1:] - cu_seqlens[:-1]

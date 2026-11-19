@@ -21,12 +21,26 @@ QFORMER_TOLERANCES = TOLERANCES | {torch.bfloat16: 5e-2}
 UTTERANCE_LENGTHS = [7, 4, 1]
 CU_SEQLENS = [0, 7, 11, 12]
 BASE_CONFIG = QFormerProjectorConfig(
-    input_size=48, output_size=80, hidden_size=64, num_attention_heads=4, ffn_hidden_size=128
+    encoder_hidden_size=48,
+    output_size=80,
+    hidden_size=64,
+    num_attention_heads=4,
+    intermediate_size=128,
 )
 PROJECTOR_CONFIGS = [
-    replace(BASE_CONFIG, num_layers=2, cross_attention_frequency=1, num_queries=2, window_size=4),
     replace(
-        BASE_CONFIG, num_layers=3, cross_attention_frequency=2, num_queries=3, window_size=None
+        BASE_CONFIG,
+        num_hidden_layers=2,
+        cross_attention_frequency=1,
+        num_query_tokens=2,
+        window_size=4,
+    ),
+    replace(
+        BASE_CONFIG,
+        num_hidden_layers=3,
+        cross_attention_frequency=2,
+        num_query_tokens=3,
+        window_size=None,
     ),
 ]
 
@@ -43,7 +57,7 @@ class Reference:
 def describe_config(config: QFormerProjectorConfig) -> str:
     """Name a config for test ids and logs, such as ``2layers-2queries-window4``."""
     window = "whole-utterance" if config.window_size is None else f"window{config.window_size}"
-    return f"{config.num_layers}layers-{config.num_queries}queries-{window}"
+    return f"{config.num_hidden_layers}layers-{config.num_query_tokens}queries-{window}"
 
 
 @pytest.fixture(name="projector_config", params=PROJECTOR_CONFIGS, ids=describe_config)
@@ -64,13 +78,13 @@ def build_reference(projector_config: QFormerProjectorConfig) -> Reference:
     torch.manual_seed(0)
     hf_config = Blip2QFormerConfig(
         hidden_size=projector_config.hidden_size,
-        num_hidden_layers=projector_config.num_layers,
+        num_hidden_layers=projector_config.num_hidden_layers,
         num_attention_heads=projector_config.num_attention_heads,
-        intermediate_size=projector_config.ffn_hidden_size,
+        intermediate_size=projector_config.intermediate_size,
         hidden_dropout_prob=0.0,
         attention_probs_dropout_prob=0.0,
         cross_attention_frequency=projector_config.cross_attention_frequency,
-        encoder_hidden_size=projector_config.input_size,
+        encoder_hidden_size=projector_config.encoder_hidden_size,
     )
     hf_config._attn_implementation = "eager"
     qformer = Blip2QFormerModel(hf_config).cuda()
@@ -84,7 +98,9 @@ def build_reference(projector_config: QFormerProjectorConfig) -> Reference:
             projector_config.hidden_size, projector_config.output_size
         ).cuda(),
         query_tokens=torch.nn.Parameter(
-            torch.randn(projector_config.num_queries, projector_config.hidden_size, device="cuda")
+            torch.randn(
+                projector_config.num_query_tokens, projector_config.hidden_size, device="cuda"
+            )
         ),
     )
 
@@ -108,7 +124,7 @@ def map_hf_tensors(
     }
     for suffix in ("weight", "bias"):
         mapped[f"layernorm.{suffix}"] = hf_tensors[f"layernorm.{suffix}"]
-    for index in range(config.num_layers):
+    for index in range(config.num_hidden_layers):
         layer, hf_layer = f"layers.{index}.", f"encoder.layer.{index}."
         attentions = {"self_attention": "attention"}
         if index % config.cross_attention_frequency == 0:
@@ -324,7 +340,7 @@ def test_rejects_heads_not_divisible_by_tp(tensor_parallel_size: int) -> None:
 
 
 @pytest.mark.parametrize(
-    "field", ["num_layers", "num_queries", "cross_attention_frequency", "window_size"]
+    "field", ["num_hidden_layers", "num_query_tokens", "cross_attention_frequency", "window_size"]
 )
 def test_rejects_counts_below_one(field: str) -> None:
     """Check that layer, query, cross-attention and window counts below one raise ValueError."""
