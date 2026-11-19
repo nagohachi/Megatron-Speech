@@ -3,18 +3,21 @@ from dataclasses import dataclass, replace
 
 import pytest
 import torch
-from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import TransformerConfig
 from transformers import Blip2QFormerConfig, Blip2QFormerModel
 
 from megatron_speech.components.projectors.qformer import QFormerProjector, QFormerProjectorConfig
+from tests.numerical_error import TOLERANCES, calc_relative_error
+from tests.tensor_parallel_shard import take_shard
 
 pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)
 
-# Largest relative error allowed against the fp32 reference, by parameter dtype.
-TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 5e-2}
+# The Q-Former's bf16 gradient errors reach 3.15e-2 at TP=2, above the shared 2e-2, so this
+# test keeps the 5e-2 it had before the tolerances were shared.
+QFORMER_TOLERANCES = TOLERANCES | {torch.bfloat16: 5e-2}
+
 UTTERANCE_LENGTHS = [7, 4, 1]
 CU_SEQLENS = [0, 7, 11, 12]
 BASE_CONFIG = QFormerProjectorConfig(
@@ -38,26 +41,26 @@ class Reference:
 
 
 def describe_config(config: QFormerProjectorConfig) -> str:
-    """Short name of a config for test ids and logs, such as ``2layers-2queries-window4``."""
+    """Name a config for test ids and logs, such as ``2layers-2queries-window4``."""
     window = "whole-utterance" if config.window_size is None else f"window{config.window_size}"
     return f"{config.num_layers}layers-{config.num_queries}queries-{window}"
 
 
 @pytest.fixture(name="projector_config", params=PROJECTOR_CONFIGS, ids=describe_config)
 def get_projector_config(request: pytest.FixtureRequest) -> QFormerProjectorConfig:
-    """A config that cuts each utterance into several windows, or one that reads it whole."""
+    """Return a config that cuts each utterance into windows, or one that reads it whole."""
     return request.param
 
 
 @pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
 def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Parameter dtype of the projector under test."""
+    """Return the parameter dtype of the projector under test."""
     return request.param
 
 
 @pytest.fixture(name="reference")
 def build_reference(projector_config: QFormerProjectorConfig) -> Reference:
-    """Random reference weights, the same on every rank."""
+    """Build random reference weights, the same on every rank."""
     torch.manual_seed(0)
     hf_config = Blip2QFormerConfig(
         hidden_size=projector_config.hidden_size,
@@ -86,43 +89,62 @@ def build_reference(projector_config: QFormerProjectorConfig) -> Reference:
     )
 
 
-def list_weight_pairs(
-    projector: QFormerProjector, reference: Reference
-) -> list[tuple[torch.nn.Module, torch.nn.Module, int | None]]:
-    """Pair each module of ``projector`` with its reference module and its split dim.
+def list_reference_parameters(reference: Reference) -> dict[str, torch.nn.Parameter]:
+    """List the Q-Former's parameters under Hugging Face's names, the projection and the queries."""
+    return {
+        **dict(reference.qformer.named_parameters()),
+        "projection.weight": reference.projection.weight,
+        "projection.bias": reference.projection.bias,
+        "query_tokens": reference.query_tokens,
+    }
 
-    Dim 0 splits output features (column parallel), dim 1 input features (row parallel), and
-    None means the module is not split.
-    """
-    pairs = [(projector.layernorm, reference.qformer.layernorm, None)]
-    for ours, theirs in zip(projector.layers, reference.qformer.encoder.layer, strict=True):
-        assert (ours.cross_attention is not None) == theirs.has_cross_attention
-        attentions = [(ours.self_attention, theirs.attention)]
-        if ours.cross_attention is not None:
-            attentions.append((ours.cross_attention, theirs.crossattention))
-        for our_attention, their_attention in attentions:
-            pairs += [
-                (our_attention.query, their_attention.attention.query, 0),
-                (our_attention.key, their_attention.attention.key, 0),
-                (our_attention.value, their_attention.attention.value, 0),
-                (our_attention.dense, their_attention.output.dense, 1),
-                (our_attention.layernorm, their_attention.output.LayerNorm, None),
+
+def map_hf_tensors(
+    hf_tensors: dict[str, torch.Tensor], config: QFormerProjectorConfig
+) -> dict[str, torch.Tensor]:
+    """Map reference weights or gradients to the projector's parameter names, before splitting."""
+    mapped = {
+        name: hf_tensors[name] for name in ("query_tokens", "projection.weight", "projection.bias")
+    }
+    for suffix in ("weight", "bias"):
+        mapped[f"layernorm.{suffix}"] = hf_tensors[f"layernorm.{suffix}"]
+    for index in range(config.num_layers):
+        layer, hf_layer = f"layers.{index}.", f"encoder.layer.{index}."
+        attentions = {"self_attention": "attention"}
+        if index % config.cross_attention_frequency == 0:
+            attentions["cross_attention"] = "crossattention"
+        for suffix in ("weight", "bias"):
+            for attention, hf_attention in attentions.items():
+                for projection in ("query", "key", "value"):
+                    mapped[f"{layer}{attention}.{projection}.{suffix}"] = hf_tensors[
+                        f"{hf_layer}{hf_attention}.attention.{projection}.{suffix}"
+                    ]
+                mapped[f"{layer}{attention}.dense.{suffix}"] = hf_tensors[
+                    f"{hf_layer}{hf_attention}.output.dense.{suffix}"
+                ]
+                mapped[f"{layer}{attention}.layernorm.{suffix}"] = hf_tensors[
+                    f"{hf_layer}{hf_attention}.output.LayerNorm.{suffix}"
+                ]
+            mapped[f"{layer}fc1.{suffix}"] = hf_tensors[
+                f"{hf_layer}intermediate_query.dense.{suffix}"
             ]
-        pairs += [
-            (ours.fc1, theirs.intermediate_query.dense, 0),
-            (ours.fc2, theirs.output_query.dense, 1),
-            (ours.mlp_layernorm, theirs.output_query.LayerNorm, None),
-        ]
-    pairs.append((projector.projection, reference.projection, 0))
-    return pairs
+            mapped[f"{layer}fc2.{suffix}"] = hf_tensors[f"{hf_layer}output_query.dense.{suffix}"]
+            mapped[f"{layer}mlp_layernorm.{suffix}"] = hf_tensors[
+                f"{hf_layer}output_query.LayerNorm.{suffix}"
+            ]
+    return mapped
 
 
-def take_shard(tensor: torch.Tensor, dim: int | None) -> torch.Tensor:
-    """This rank's part of ``tensor`` split along ``dim``, or all of it for None."""
-    if dim is None:
-        return tensor
-    size = parallel_state.get_tensor_model_parallel_world_size()
-    return tensor.chunk(size, dim)[parallel_state.get_tensor_model_parallel_rank()]
+def calc_split_dim(name: str) -> int | None:
+    """Calculate the dim of the projector parameter ``name`` that TP splits, if any."""
+    column_parallel = ("query", "key", "value", "fc1", "projection")
+    if name.endswith(
+        tuple(f"{layer}.{s}" for layer in column_parallel for s in ("weight", "bias"))
+    ):
+        return 0  # output features
+    if name.endswith(("dense.weight", "fc2.weight")):
+        return 1  # input features
+    return None
 
 
 @pytest.fixture(name="projector")
@@ -132,7 +154,7 @@ def build_projector(
     dtype: torch.dtype,
     tensor_parallel_size: int,
 ) -> QFormerProjector:
-    """QFormerProjector that holds this rank's shards of the reference weights."""
+    """Build a QFormerProjector that holds this rank's shards of the reference weights."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
@@ -143,24 +165,26 @@ def build_projector(
     )
     pg_collection = ProcessGroupCollection.use_mpu_process_groups()
     projector = QFormerProjector(projector_config, llm_config, pg_collection).cuda()
+    projector_parameters = dict(projector.named_parameters())
+    reference_weights = {n: p.detach() for n, p in list_reference_parameters(reference).items()}
+    hf_weights = map_hf_tensors(reference_weights, projector_config)
+    assert hf_weights.keys() == projector_parameters.keys()
     with torch.no_grad():
-        projector.query_tokens.copy_(reference.query_tokens)
-        for ours, theirs, dim in list_weight_pairs(projector, reference):
-            weight = take_shard(theirs.weight, dim)
-            assert ours.weight.shape == weight.shape
-            ours.weight.copy_(weight)
-            ours.bias.copy_(take_shard(theirs.bias, 0 if dim == 0 else None))
+        for name, weight in hf_weights.items():
+            shard = take_shard(weight, calc_split_dim(name))
+            assert projector_parameters[name].shape == shard.shape
+            projector_parameters[name].copy_(shard)
     return projector
 
 
 @pytest.fixture(name="frames")
 def build_frames() -> torch.Tensor:
-    """fp32 encoder frames of UTTERANCE_LENGTHS, the same on every rank."""
+    """Build fp32 encoder frames of UTTERANCE_LENGTHS, the same on every rank."""
     torch.manual_seed(1)
     return torch.randn(sum(UTTERANCE_LENGTHS), 48, device="cuda", requires_grad=True)
 
 
-def run_reference(
+def run_hf_qformer(
     reference: Reference, frames: torch.Tensor, window_size: int | None
 ) -> torch.Tensor:
     """Cut the utterances into zero-padded windows and run the Hugging Face model on them.
@@ -186,29 +210,44 @@ def run_reference(
     return output.reshape(-1, output.shape[-1])
 
 
-def calc_relative_error(value: torch.Tensor, target: torch.Tensor) -> float:
-    """Largest absolute difference divided by the largest absolute target value."""
-    return ((value.float() - target).abs().max() / target.abs().max()).item()
+@pytest.fixture(name="reference_output")
+def calc_reference_output(
+    reference: Reference, projector_config: QFormerProjectorConfig, frames: torch.Tensor
+) -> torch.Tensor:
+    """Calculate the Hugging Face Q-Former's projected output for the frames without gradients."""
+    with torch.no_grad():
+        return run_hf_qformer(reference, frames, projector_config.window_size)
+
+
+@pytest.fixture(name="projector_output")
+def calc_projector_output(
+    projector: QFormerProjector, frames: torch.Tensor, dtype: torch.dtype
+) -> torch.Tensor:
+    """Calculate the output of the projector under test for the frames in its dtype."""
+    cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
+    with torch.no_grad():
+        return projector(frames.to(dtype), cu_seqlens)
+
+
+def test_output_shape_matches_hf(
+    projector_output: torch.Tensor, reference_output: torch.Tensor
+) -> None:
+    """Check that the projector output has the shape of the reference output."""
+    assert projector_output.shape == reference_output.shape
 
 
 def test_output_matches_hf(
-    projector: QFormerProjector,
-    reference: Reference,
+    projector_output: torch.Tensor,
+    reference_output: torch.Tensor,
     projector_config: QFormerProjectorConfig,
-    frames: torch.Tensor,
     dtype: torch.dtype,
 ) -> None:
-    """The projector output equals the Hugging Face Q-Former followed by the projection."""
-    cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
-    with torch.no_grad():
-        expected = run_reference(reference, frames, projector_config.window_size)
-        actual = projector(frames.to(dtype), cu_seqlens)
-    error = calc_relative_error(actual, expected)
+    """Check that the output equals the Hugging Face Q-Former followed by the projection."""
+    error = calc_relative_error(projector_output, reference_output)
     logger.info(
         "%s %s: output max relative error %.2e", describe_config(projector_config), dtype, error
     )
-    assert actual.shape == expected.shape
-    assert error < TOLERANCES[dtype]
+    assert error < QFORMER_TOLERANCES[dtype]
 
 
 def test_gradients_match_hf(
@@ -218,21 +257,25 @@ def test_gradients_match_hf(
     frames: torch.Tensor,
     dtype: torch.dtype,
 ) -> None:
-    """Gradients of the input, the queries and every weight equal the reference ones."""
+    """Check that gradients of the input and of every parameter equal the reference ones."""
     cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
-    our_frames = frames.detach().to(dtype).requires_grad_()
-    expected = run_reference(reference, frames, projector_config.window_size)
-    actual = projector(our_frames, cu_seqlens)
+    projector_frames = frames.detach().to(dtype).requires_grad_()
+    expected = run_hf_qformer(reference, frames, projector_config.window_size)
+    actual = projector(projector_frames, cu_seqlens)
     grad_output = torch.randn_like(expected)
     expected.backward(grad_output)
     actual.backward(grad_output.to(dtype))
 
+    reference_gradients = {n: p.grad for n, p in list_reference_parameters(reference).items()}
+    hf_gradients = map_hf_tensors(reference_gradients, projector_config)
     errors = {
-        "input": calc_relative_error(our_frames.grad, frames.grad),
-        "queries": calc_relative_error(projector.query_tokens.grad, reference.query_tokens.grad),
-        "weights": max(
-            calc_relative_error(ours.weight.grad, take_shard(theirs.weight.grad, dim))
-            for ours, theirs, dim in list_weight_pairs(projector, reference)
+        "input": calc_relative_error(projector_frames.grad, frames.grad),
+        # The key bias adds the same value to every score of a query, which softmax ignores,
+        # so its true gradient is zero and both sides hold only rounding errors.
+        "parameters": max(
+            calc_relative_error(param.grad, take_shard(hf_gradients[name], calc_split_dim(name)))
+            for name, param in projector.named_parameters()
+            if not name.endswith("key.bias")
         ),
     }
     logger.info(
@@ -241,12 +284,12 @@ def test_gradients_match_hf(
         dtype,
         ", ".join(f"{name} {error:.2e}" for name, error in errors.items()),
     )
-    assert max(errors.values()) < TOLERANCES[dtype], errors
+    assert max(errors.values()) < QFORMER_TOLERANCES[dtype], errors
 
 
 @pytest.mark.parametrize("cu_seqlens", [[0], [0, 0]], ids=["no-utterances", "empty-utterance"])
 def test_accepts_no_frames(tensor_parallel_size: int, cu_seqlens: list[int]) -> None:
-    """No utterances, or one utterance without frames, give no output vectors."""
+    """Check that no utterances, or one utterance without frames, give no output vectors."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
@@ -262,7 +305,7 @@ def test_accepts_no_frames(tensor_parallel_size: int, cu_seqlens: list[int]) -> 
 
 
 def test_rejects_heads_not_divisible_by_tp(tensor_parallel_size: int) -> None:
-    """Attention heads that do not split evenly over the TP ranks raise ValueError."""
+    """Check that attention heads that TP cannot split evenly raise ValueError."""
     if tensor_parallel_size == 1:
         pytest.skip("every head count splits over one rank")
     llm_config = TransformerConfig(
@@ -284,7 +327,7 @@ def test_rejects_heads_not_divisible_by_tp(tensor_parallel_size: int) -> None:
     "field", ["num_layers", "num_queries", "cross_attention_frequency", "window_size"]
 )
 def test_rejects_counts_below_one(field: str) -> None:
-    """Layer, query, cross-attention and window counts below one raise ValueError."""
+    """Check that layer, query, cross-attention and window counts below one raise ValueError."""
     llm_config = TransformerConfig(num_layers=1, hidden_size=64, num_attention_heads=1)
     projector_config = replace(BASE_CONFIG, **{field: 0})
     with pytest.raises(ValueError, match=field):

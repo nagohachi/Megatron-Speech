@@ -4,18 +4,17 @@ from itertools import pairwise
 
 import pytest
 import torch
-from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import TransformerConfig
 
 from megatron_speech.components.activations import ACTIVATIONS
 from megatron_speech.components.projectors.mlp import MLPProjector, MLPProjectorConfig
+from tests.numerical_error import TOLERANCES, calc_relative_error
+from tests.tensor_parallel_shard import take_shard
 
 pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)
 
-# Largest relative error allowed against the fp32 reference, by parameter dtype.
-TOLERANCES = {torch.float32: 1e-5, torch.bfloat16: 2e-2}
 BASE_CONFIG = MLPProjectorConfig(input_size=48, output_size=64, hidden_size=96)
 PROJECTOR_CONFIGS = [
     replace(BASE_CONFIG, num_layers=1, activation="gelu"),
@@ -29,20 +28,20 @@ PROJECTOR_CONFIGS = [
     params=PROJECTOR_CONFIGS,
     ids=lambda config: f"{config.num_layers}layers-{config.activation}",
 )
-def build_projector_config(request: pytest.FixtureRequest) -> MLPProjectorConfig:
-    """Projector config with one to three layers."""
+def get_projector_config(request: pytest.FixtureRequest) -> MLPProjectorConfig:
+    """Return a projector config with one to three layers."""
     return request.param
 
 
 @pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
 def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Parameter dtype of the projector under test."""
+    """Return the parameter dtype of the projector under test."""
     return request.param
 
 
 @pytest.fixture(name="reference")
 def build_reference(projector_config: MLPProjectorConfig) -> list[torch.nn.Linear]:
-    """fp32 ``torch.nn.Linear`` layers with random weights, the same on every rank."""
+    """Build fp32 ``torch.nn.Linear`` layers with random weights, the same on every rank."""
     torch.manual_seed(0)
     sizes = [
         projector_config.input_size,
@@ -52,16 +51,8 @@ def build_reference(projector_config: MLPProjectorConfig) -> list[torch.nn.Linea
     return [torch.nn.Linear(n_in, n_out).cuda() for n_in, n_out in pairwise(sizes)]
 
 
-def take_shard(tensor: torch.Tensor, dim: int | None) -> torch.Tensor:
-    """This rank's part of ``tensor`` split along ``dim``, or all of it for None."""
-    if dim is None:
-        return tensor
-    size = parallel_state.get_tensor_model_parallel_world_size()
-    return tensor.chunk(size, dim)[parallel_state.get_tensor_model_parallel_rank()]
-
-
-def get_split_dim(index: int) -> int:
-    """Weight dim that layer ``index`` splits: output features (0) or input features (1)."""
+def calc_split_dim(index: int) -> int:
+    """Calculate the weight dim that layer ``index`` splits: output (0) or input (1)."""
     return 0 if index % 2 == 0 else 1
 
 
@@ -72,7 +63,7 @@ def build_projector(
     dtype: torch.dtype,
     tensor_parallel_size: int,
 ) -> MLPProjector:
-    """MLPProjector that holds this rank's shards of the reference weights."""
+    """Build an MLPProjector that holds this rank's shards of the reference weights."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
@@ -85,7 +76,7 @@ def build_projector(
     projector = MLPProjector(projector_config, llm_config, pg_collection).cuda()
     with torch.no_grad():
         for index, (layer, ref) in enumerate(zip(projector.layers, reference, strict=True)):
-            dim = get_split_dim(index)
+            dim = calc_split_dim(index)
             weight = take_shard(ref.weight, dim)
             assert layer.weight.shape == weight.shape
             layer.weight.copy_(weight)
@@ -95,12 +86,12 @@ def build_projector(
 
 @pytest.fixture(name="inputs")
 def build_inputs() -> torch.Tensor:
-    """fp32 ``[10, 48]`` input, the same on every rank."""
+    """Build an fp32 ``[10, 48]`` input, the same on every rank."""
     torch.manual_seed(1)
     return torch.randn(10, 48, device="cuda", requires_grad=True)
 
 
-def run_reference(
+def run_reference_layers(
     reference: list[torch.nn.Linear], x: torch.Tensor, activation: str
 ) -> torch.Tensor:
     """Apply the reference layers with ``activation`` between them."""
@@ -111,28 +102,47 @@ def run_reference(
     return x
 
 
-def calc_relative_error(value: torch.Tensor, target: torch.Tensor) -> float:
-    """Largest absolute difference divided by the largest absolute target value."""
-    return ((value.float() - target).abs().max() / target.abs().max()).item()
+@pytest.fixture(name="reference_output")
+def calc_reference_output(
+    reference: list[torch.nn.Linear], projector_config: MLPProjectorConfig, inputs: torch.Tensor
+) -> torch.Tensor:
+    """Calculate the reference layers' output for the input without gradients."""
+    with torch.no_grad():
+        return run_reference_layers(reference, inputs, projector_config.activation)
+
+
+@pytest.fixture(name="projector_output")
+def calc_projector_output(
+    projector: MLPProjector, inputs: torch.Tensor, dtype: torch.dtype
+) -> torch.Tensor:
+    """Calculate the output of the projector under test for the input in its dtype."""
+    with torch.no_grad():
+        return projector(inputs.to(dtype))
+
+
+def test_output_shape_matches_torch(
+    projector_output: torch.Tensor, reference_output: torch.Tensor
+) -> None:
+    """Check that the projector output has the shape of the reference layers' output."""
+    assert projector_output.shape == reference_output.shape
+
+
+def test_output_has_parameter_dtype(projector_output: torch.Tensor, dtype: torch.dtype) -> None:
+    """Check that the projector output has the dtype of the projector's parameters."""
+    assert projector_output.dtype == dtype
 
 
 def test_output_matches_torch(
-    projector: MLPProjector,
-    reference: list[torch.nn.Linear],
+    projector_output: torch.Tensor,
+    reference_output: torch.Tensor,
     projector_config: MLPProjectorConfig,
-    inputs: torch.Tensor,
     dtype: torch.dtype,
 ) -> None:
-    """The projector output equals the reference layers' output."""
-    with torch.no_grad():
-        expected = run_reference(reference, inputs, projector_config.activation)
-        actual = projector(inputs.to(dtype))
-    error = calc_relative_error(actual, expected)
+    """Check that the projector output equals the reference layers' output."""
+    error = calc_relative_error(projector_output, reference_output)
     logger.info(
         "layers=%d %s: output max relative error %.2e", projector_config.num_layers, dtype, error
     )
-    assert actual.shape == (10, 64)
-    assert actual.dtype == dtype
     assert error < TOLERANCES[dtype]
 
 
@@ -143,17 +153,17 @@ def test_gradients_match_torch(
     inputs: torch.Tensor,
     dtype: torch.dtype,
 ) -> None:
-    """Gradients of the input and of every weight equal the reference ones."""
-    our_inputs = inputs.detach().to(dtype).requires_grad_()
-    expected = run_reference(reference, inputs, projector_config.activation)
-    actual = projector(our_inputs)
+    """Check that gradients of the input and of every weight equal the reference ones."""
+    projector_inputs = inputs.detach().to(dtype).requires_grad_()
+    expected = run_reference_layers(reference, inputs, projector_config.activation)
+    actual = projector(projector_inputs)
     grad_output = torch.randn_like(expected)
     expected.backward(grad_output)
     actual.backward(grad_output.to(dtype))
 
-    errors = {"input": calc_relative_error(our_inputs.grad, inputs.grad)}
+    errors = {"input": calc_relative_error(projector_inputs.grad, inputs.grad)}
     for index, (layer, ref) in enumerate(zip(projector.layers, reference, strict=True)):
-        target = take_shard(ref.weight.grad, get_split_dim(index))
+        target = take_shard(ref.weight.grad, calc_split_dim(index))
         errors[f"layer {index} weight"] = calc_relative_error(layer.weight.grad, target)
     logger.info(
         "layers=%d %s: gradient max relative error %s",
@@ -164,8 +174,8 @@ def test_gradients_match_torch(
     assert max(errors.values()) < TOLERANCES[dtype], errors
 
 
-def test_accepts_zero_tokens(tensor_parallel_size: int) -> None:
-    """A batch without audio gives the projector no tokens."""
+def test_accepts_zero_frames(tensor_parallel_size: int) -> None:
+    """Check that the projector accepts no encoder frames, which a batch without audio gives."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
@@ -177,7 +187,7 @@ def test_accepts_zero_tokens(tensor_parallel_size: int) -> None:
 
 
 def test_rejects_features_not_divisible_by_tp(tensor_parallel_size: int) -> None:
-    """A column-parallel layer whose output features do not split evenly raises ValueError."""
+    """Check that a column-parallel layer whose outputs TP cannot split raises ValueError."""
     if tensor_parallel_size == 1:
         pytest.skip("every size splits over one rank")
     llm_config = TransformerConfig(
@@ -192,7 +202,7 @@ def test_rejects_features_not_divisible_by_tp(tensor_parallel_size: int) -> None
 
 
 def test_rejects_pg_collection_of_another_tp_size(tensor_parallel_size: int) -> None:
-    """The TP group in pg_collection must have as many ranks as llm_config says."""
+    """Check that a pg_collection TP group of another size than llm_config raises ValueError."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,

@@ -8,7 +8,10 @@ from megatron_speech.components.transformer_config import (
 
 
 def test_takes_parallelism_and_precision_from_llm() -> None:
-    """TP size and precision come from the LLM; sequence, context and pipeline parallelism not."""
+    """Check that TP size and precision come from the LLM.
+
+    Sequence, context and pipeline parallelism stay off in the component.
+    """
     llm_config = TransformerConfig(
         num_layers=4,
         hidden_size=64,

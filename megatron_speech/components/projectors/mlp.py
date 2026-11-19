@@ -28,7 +28,7 @@ class MLPProjectorConfig:
 
 
 class MLPProjector(MegatronModule):
-    """Linear layers with biases and an activation between them, on ``[num_tokens, input_size]``.
+    """Linear layers with biases and an activation between them, on ``[num_frames, input_size]``.
 
     Layers alternate between splitting their output features (column parallel) and their input
     features (row parallel) across the tensor parallel ranks, so the activation after a
@@ -47,7 +47,7 @@ class MLPProjector(MegatronModule):
         tp_size = llm_config.tensor_model_parallel_size
 
         def list_feature_sizes() -> list[int]:
-            """Input features of each layer, followed by the output features of the last."""
+            """List each layer's input features, followed by the output features of the last."""
             hidden_sizes = [projector_config.hidden_size] * (num_layers - 1)
             return [projector_config.input_size, *hidden_sizes, projector_config.output_size]
 
@@ -74,7 +74,7 @@ class MLPProjector(MegatronModule):
         def build_layer(
             index: int, in_features: int, out_features: int
         ) -> TEColumnParallelLinear | TERowParallelLinear:
-            """Column-parallel layer at an even ``index``, row-parallel layer at an odd one."""
+            """Build a column-parallel layer at an even ``index``, else a row-parallel one."""
             if index % 2 == 0:
                 return TEColumnParallelLinear(
                     in_features,
@@ -117,7 +117,7 @@ class MLPProjector(MegatronModule):
         )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Project ``[num_tokens, input_size]`` to ``[num_tokens, output_size]``."""
+        """Project ``[num_frames, input_size]`` encoder frames to ``[num_frames, output_size]``."""
         for index, layer in enumerate(self.layers):
             hidden_states, _ = layer(hidden_states)
             if index < len(self.layers) - 1:

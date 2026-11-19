@@ -1,3 +1,6 @@
+from collections.abc import Callable
+
+import torch
 from megatron.core.transformer import TransformerConfig
 
 # Parallelism and precision settings that every component takes from the LLM config.
@@ -19,7 +22,8 @@ INHERITED_FIELDS = (
 
 
 def build_component_transformer_config(
-    llm_config: TransformerConfig, **arch: int | float | bool
+    llm_config: TransformerConfig,
+    **arch: int | float | bool | str | Callable[[torch.Tensor], torch.Tensor],
 ) -> TransformerConfig:
     """Build the ``TransformerConfig`` of a component.
 

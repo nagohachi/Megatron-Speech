@@ -57,7 +57,7 @@ def build_column_parallel_linear(
     config: TransformerConfig,
     tp_group: torch.distributed.ProcessGroup | None,
 ) -> TEColumnParallelLinear:
-    """Linear layer with a bias whose output features are split over the TP ranks."""
+    """Build a linear layer with a bias whose output features are split over the TP ranks."""
     return TEColumnParallelLinear(
         input_size,
         output_size,
@@ -77,7 +77,7 @@ def build_row_parallel_linear(
     config: TransformerConfig,
     tp_group: torch.distributed.ProcessGroup | None,
 ) -> TERowParallelLinear:
-    """Linear layer with a bias whose input features are split over the TP ranks."""
+    """Build a linear layer with a bias whose input features are split over the TP ranks."""
     return TERowParallelLinear(
         input_size,
         output_size,
@@ -242,7 +242,7 @@ class QFormerProjector(MegatronModule):
                     raise ValueError(f"{name} must be at least 1, got {count}")
 
         def build_query_tokens() -> torch.nn.Parameter:
-            """Learned queries ``[num_queries, hidden_size]``, drawn from a normal distribution.
+            """Build the learned queries ``[num_queries, hidden_size]`` from a normal distribution.
 
             Hugging Face starts them from zeros, but equal queries get equal gradients and stay
             equal; LAVIS's BLIP-2 draws them from a normal distribution, as done here.
