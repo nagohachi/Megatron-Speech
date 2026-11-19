@@ -34,7 +34,7 @@ class SpeechLanguageModel(GPTModel):
         - both given: the loss ``[batch, sequence]`` from ``calc_target_loss``, computed only
           where ``loss_mask`` is set and 0 elsewhere.
         - ``labels`` only: ``GPTModel``'s loss ``[batch, sequence]`` at every position.
-        - neither: ``GPTModel``'s logits ``[batch, sequence, vocabulary]``, split over the TP
+        - no ``labels``: ``GPTModel``'s logits ``[batch, sequence, vocabulary]``, split over the TP
           ranks along the vocabulary.
         """
         return super().forward(
@@ -82,22 +82,19 @@ class SpeechLanguageModel(GPTModel):
             hidden_states = gather_from_sequence_parallel_region(
                 hidden_states, tensor_parallel_output_grad=False, group=output_layer.tp_group
             )
-        num_positions, batch_size, hidden_size = hidden_states.shape
-        # Indices of the target positions in the flattened [sequence, batch] order.
-        target_indices = loss_mask.transpose(0, 1).reshape(-1).nonzero(as_tuple=True)[0]
-        target_hidden_states = hidden_states.reshape(-1, hidden_size)[target_indices].unsqueeze(1)
+        targets = loss_mask.transpose(0, 1).bool()  # [sequence, batch], as hidden_states
         output_layer.sequence_parallel = False
         try:
             logits, _ = output_layer(
-                target_hidden_states,
+                hidden_states[targets].unsqueeze(1),
                 weight=output_weight,
                 runtime_gather_output=runtime_gather_output,
             )
         finally:
             output_layer.sequence_parallel = sequence_parallel
-        target_labels = labels.transpose(0, 1).reshape(-1)[target_indices].unsqueeze(0)
-        target_loss = compute_language_model_loss(target_labels, scale_logits(logits)).reshape(-1)
-        loss = target_loss.new_zeros(num_positions * batch_size).index_put(
-            (target_indices,), target_loss
-        )
-        return loss.view(num_positions, batch_size).transpose(0, 1).contiguous()
+        target_labels = labels.transpose(0, 1)[targets].unsqueeze(0)
+        target_loss = compute_language_model_loss(target_labels, scale_logits(logits))
+        # masked_scatter puts the losses back in the order in which hidden_states[targets]
+        # took the positions.
+        loss = target_loss.new_zeros(targets.shape).masked_scatter(targets, target_loss)
+        return loss.transpose(0, 1).contiguous()
