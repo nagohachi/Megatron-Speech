@@ -8,6 +8,7 @@ from megatron.core.transformer import TransformerConfig
 from transformers import Blip2QFormerConfig, Blip2QFormerModel
 
 from megatron_speech.components.projectors.qformer import QFormerProjector, QFormerProjectorConfig
+from tests.hf_reference import randomize_norms
 from tests.numerical_error import TOLERANCES, calc_relative_error
 from tests.tensor_parallel_shard import take_shard
 
@@ -82,10 +83,7 @@ def build_reference(projector_config: QFormerProjectorConfig) -> Reference:
     )
     hf_config._attn_implementation = "eager"
     qformer = Blip2QFormerModel(hf_config).cuda()
-    with torch.no_grad():  # LayerNorms away from (1, 0), so that a missed copy shows
-        for name, param in qformer.named_parameters():
-            if "layernorm" in name.lower():
-                param.normal_(mean=1.0 if name.endswith("weight") else 0.0, std=0.1)
+    randomize_norms(qformer, ("layernorm", "LayerNorm"))
     return Reference(
         qformer=qformer,
         projection=torch.nn.Linear(

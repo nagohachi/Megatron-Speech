@@ -21,6 +21,8 @@ from megatron_speech.components.encoders.qwen3_asr import (
     Qwen3ASREncoderConfig,
     Qwen3ASREncoderInputs,
 )
+from tests.hf_audio_inputs import build_hf_audio_inputs
+from tests.hf_reference import randomize_norms
 from tests.numerical_error import TOLERANCES, calc_relative_error
 from tests.tensor_parallel_shard import take_shard
 
@@ -110,10 +112,7 @@ def build_reference() -> HFEncoder:
     )
     hf_config._attn_implementation = "eager"
     reference = HFEncoder(hf_config).cuda()
-    with torch.no_grad():  # LayerNorms away from (1, 0), so that a missed copy shows
-        for name, param in reference.named_parameters():
-            if "layer_norm" in name or "ln_post" in name:
-                param.normal_(mean=1.0 if name.endswith("weight") else 0.0, std=0.1)
+    randomize_norms(reference, ("layer_norm", "ln_post"))
     return reference
 
 
@@ -151,18 +150,8 @@ def build_mels() -> list[torch.Tensor]:
 
 
 def run_hf_encoder(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tensor:
-    """Pad the log-mels to a multiple of the chunk length with zeros and run Hugging Face's."""
-    mel_frames_per_chunk = ENCODER_CONFIG.mel_frames_per_chunk
-    longest_length = max(mel.shape[1] for mel in mels)
-    padded_length = -(-longest_length // mel_frames_per_chunk) * mel_frames_per_chunk
-    features = torch.zeros(len(mels), ENCODER_CONFIG.num_mel_bins, padded_length)
-    mask = torch.zeros(len(mels), padded_length, dtype=torch.long)
-    for index, mel in enumerate(mels):
-        features[index, :, : mel.shape[1]] = mel
-        mask[index, : mel.shape[1]] = 1
-    return reference(
-        input_features=features.cuda(), input_features_mask=mask.cuda()
-    ).last_hidden_state
+    """Run Hugging Face's encoder on the log-mels, zero padded as its inputs are."""
+    return reference(**build_hf_audio_inputs(mels, ENCODER_CONFIG)).last_hidden_state
 
 
 @pytest.fixture(name="cpu_inputs")
