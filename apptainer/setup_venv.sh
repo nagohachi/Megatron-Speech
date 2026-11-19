@@ -44,9 +44,7 @@ SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 echo "$MLM" > "$SITE/megatron_lm.pth"
 
 # Megatron-Bridge supplies the rules that convert weights between Hugging Face and Megatron.
-# Its dependencies stay out: they include the megatron-core package, which would stand beside
-# the submodule's megatron.core, and the conversion modules import without the others. This
-# commit's own Megatron-LM is 1d63d58, two commits before the submodule's.
+# --no-deps: its dependencies include the megatron-core package, a second megatron.core.
 MEGATRON_BRIDGE_COMMIT=16595bbdc5242a8d27505b19f3ea32e8ae2ed428
 "$UV" pip install --no-deps \
     "megatron-bridge @ https://github.com/NVIDIA-NeMo/Megatron-Bridge/archive/$MEGATRON_BRIDGE_COMMIT.tar.gz"
