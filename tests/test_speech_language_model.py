@@ -90,13 +90,26 @@ def build_model(
     return model
 
 
+@pytest.fixture(name="targets", params=["some", "all"])
+def get_targets(request: pytest.FixtureRequest) -> str:
+    """Return which positions of the batch are targets: ``some`` of them or ``all``."""
+    return request.param
+
+
 @pytest.fixture(name="batch")
-def build_batch() -> Batch:
-    """Build a batch whose first sequence has targets at 10 to 15 and the second at 3 to 5."""
+def build_batch(targets: str) -> Batch:
+    """Build a batch whose target positions ``targets`` names.
+
+    ``some`` puts the targets of the first sequence at 10 to 15 and of the second at 3 to 5,
+    ``all`` makes every position a target, and ``none`` no position.
+    """
     torch.manual_seed(1)
     loss_mask = torch.zeros(BATCH_SIZE, SEQUENCE_LENGTH, device="cuda")
-    loss_mask[0, 10:] = 1
-    loss_mask[1, 3:6] = 1
+    if targets == "some":
+        loss_mask[0, 10:] = 1
+        loss_mask[1, 3:6] = 1
+    elif targets == "all":
+        loss_mask[:] = 1
     return Batch(
         input_ids=torch.randint(VOCAB_SIZE, (BATCH_SIZE, SEQUENCE_LENGTH), device="cuda"),
         position_ids=torch.arange(SEQUENCE_LENGTH, device="cuda").expand(BATCH_SIZE, -1),
@@ -187,9 +200,12 @@ def test_returns_logits_without_labels(
     assert error < TOLERANCES[dtype]
 
 
+@pytest.mark.parametrize("targets", ["none"])
 def test_accepts_batch_without_targets(model: SpeechLanguageModel, batch: Batch) -> None:
-    """Check that a batch without target positions gives a loss of 0 and runs backward."""
-    batch.loss_mask.zero_()
+    """Check that a batch without target positions gives a loss of 0 and gradients of 0."""
     loss = run_model(model, batch)
     assert torch.all(loss == 0)
     (loss * batch.loss_mask).sum().backward()
+    for name, param in model.named_parameters():
+        assert param.grad is not None, name
+        assert torch.all(param.grad == 0), name
