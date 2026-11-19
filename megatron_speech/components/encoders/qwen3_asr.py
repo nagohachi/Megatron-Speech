@@ -46,10 +46,13 @@ class Qwen3ASREncoderConfig:
         """Raise ValueError for shapes that the encoder or its inputs cannot use."""
         if self.n_window < 1:
             raise ValueError(f"n_window must be at least 1, got {self.n_window}")
-        if self.n_window_infer < self.chunk_frames or self.n_window_infer % self.chunk_frames:
+        if (
+            self.n_window_infer < self.mel_frames_per_chunk
+            or self.n_window_infer % self.mel_frames_per_chunk
+        ):
             raise ValueError(
                 f"n_window_infer={self.n_window_infer} must be a positive multiple of "
-                f"2 * n_window={self.chunk_frames}"
+                f"2 * n_window={self.mel_frames_per_chunk}"
             )
         # The position embedding puts hidden_size / 2 sines and cosines side by side and
         # divides by hidden_size / 2 - 1.
@@ -66,27 +69,27 @@ class Qwen3ASREncoderConfig:
             raise ValueError(f"activation={self.activation!r} is not one of {sorted(ACTIVATIONS)}")
 
     @property
-    def chunk_frames(self) -> int:
-        """Mel frames per chunk."""
+    def mel_frames_per_chunk(self) -> int:
+        """Number of mel frames in a chunk."""
         return 2 * self.n_window
 
     @property
     def tokens_per_chunk(self) -> int:
         """Tokens that the convolutions make from a full chunk (13 for 100 frames)."""
-        return self.calc_num_tokens(self.chunk_frames)
+        return self.calc_num_tokens(self.mel_frames_per_chunk)
 
     @property
-    def window_tokens(self) -> int:
-        """Tokens per attention window (104 for the released models)."""
-        return self.tokens_per_chunk * (self.n_window_infer // self.chunk_frames)
+    def tokens_per_window(self) -> int:
+        """Number of tokens in an attention window (104 for the released models)."""
+        return self.tokens_per_chunk * (self.n_window_infer // self.mel_frames_per_chunk)
 
     @property
-    def conv_out_features(self) -> int:
-        """Features of a token after the convolutions: channels times frequency bins."""
-        frequency_bins = self.num_mel_bins
+    def num_conv_out_features(self) -> int:
+        """Number of features of a token after the convolutions: channels times frequency bins."""
+        num_frequency_bins = self.num_mel_bins
         for _ in range(3):
-            frequency_bins = (frequency_bins - 1) // 2 + 1
-        return self.downsample_hidden_size * frequency_bins
+            num_frequency_bins = (num_frequency_bins - 1) // 2 + 1
+        return self.downsample_hidden_size * num_frequency_bins
 
     def calc_num_tokens(self, num_frames: int) -> int:
         """Encoder output tokens of an utterance of ``num_frames`` mel frames.
@@ -94,21 +97,22 @@ class Qwen3ASREncoderConfig:
         Every chunk goes through three convolutions with kernel 3, stride 2 and padding 1.
         """
 
-        def calc_chunk_tokens(frames: int) -> int:
+        def calc_chunk_tokens(length: int) -> int:
             for _ in range(3):
-                frames = (frames - 1) // 2 + 1 if frames > 0 else 0
-            return frames
+                length = (length - 1) // 2 + 1 if length > 0 else 0
+            return length
 
-        full_chunks, rest = divmod(num_frames, self.chunk_frames)
-        return full_chunks * calc_chunk_tokens(self.chunk_frames) + calc_chunk_tokens(rest)
+        num_full_chunks, rest = divmod(num_frames, self.mel_frames_per_chunk)
+        num_full_chunk_tokens = num_full_chunks * calc_chunk_tokens(self.mel_frames_per_chunk)
+        return num_full_chunk_tokens + calc_chunk_tokens(rest)
 
 
 @dataclass
 class Qwen3ASREncoderInputs:
     """Inputs of ``Qwen3ASREncoder.forward`` for a batch of utterances, made on the CPU.
 
-    - ``input_features``: ``[num_chunks, num_mel_bins, chunk_frames]`` log-mel chunks of all
-      utterances, utterance by utterance, zero past the frames of each chunk
+    - ``input_features``: ``[num_chunks, num_mel_bins, mel_frames_per_chunk]`` log-mel chunks
+      of all utterances, utterance by utterance, zero past the frames of each chunk
     - ``token_index``: ``[num_tokens]`` positions of the valid tokens in the
       ``[num_chunks * tokens_per_chunk]`` grid of convolution outputs
     - ``cu_seqlens``: ``[num_windows + 1]`` int32 cumulative token counts of the attention windows
@@ -124,25 +128,31 @@ class Qwen3ASREncoderInputs:
     def build(cls, mels: list[torch.Tensor], config: Qwen3ASREncoderConfig) -> Self:
         """Cut ``[num_mel_bins, num_frames]`` log-mels into chunks and attention windows.
 
-        Windows start at the first token of each utterance and hold ``window_tokens`` tokens;
-        the last window of an utterance may be shorter. A batch without frames has no encoder
-        inputs: its audio inputs are None, and MIMO then does not call the encoder.
+        Windows start at the first token of each utterance and hold ``tokens_per_window``
+        tokens; the last window of an utterance may be shorter. A batch without frames has no
+        encoder inputs: its audio inputs are None, and MIMO then does not call the encoder.
         """
         if not any(mel.shape[1] for mel in mels):
             raise ValueError(
                 "no utterance has frames; give MIMO None as the audio inputs of such a batch"
             )
-        chunk_frames = config.chunk_frames
+        mel_frames_per_chunk = config.mel_frames_per_chunk
         chunks, token_index, window_lengths = [], [], []
         for mel in mels:
-            for start in range(0, mel.shape[1], chunk_frames):
-                piece = mel[:, start : start + chunk_frames]
+            for start in range(0, mel.shape[1], mel_frames_per_chunk):
+                piece = mel[:, start : start + mel_frames_per_chunk]
                 grid_offset = len(chunks) * config.tokens_per_chunk
                 num_tokens = config.calc_num_tokens(piece.shape[1])
                 token_index.append(torch.arange(grid_offset, grid_offset + num_tokens))
-                chunks.append(torch.nn.functional.pad(piece, (0, chunk_frames - piece.shape[1])))
-            full_windows, rest = divmod(config.calc_num_tokens(mel.shape[1]), config.window_tokens)
-            window_lengths += [config.window_tokens] * full_windows + ([rest] if rest else [])
+                chunks.append(
+                    torch.nn.functional.pad(piece, (0, mel_frames_per_chunk - piece.shape[1]))
+                )
+            num_full_windows, rest = divmod(
+                config.calc_num_tokens(mel.shape[1]), config.tokens_per_window
+            )
+            window_lengths += [config.tokens_per_window] * num_full_windows
+            if rest:
+                window_lengths.append(rest)
         cu_seqlens = torch.zeros(len(window_lengths) + 1, dtype=torch.int32)
         cu_seqlens[1:] = torch.cumsum(torch.tensor(window_lengths), dim=0)
         return cls(
@@ -201,9 +211,9 @@ class Qwen3ASREncoder(MegatronModule):
 
         def build_position_embedding() -> torch.Tensor:
             """Sinusoidal ``[tokens_per_chunk, hidden_size]`` embedding, as Hugging Face's."""
-            channels = encoder_config.hidden_size
-            log_timescale_increment = np.log(10000.0) / (channels // 2 - 1)
-            inv_timescales = torch.exp(-log_timescale_increment * torch.arange(channels // 2))
+            num_channels = encoder_config.hidden_size
+            log_timescale_increment = np.log(10000.0) / (num_channels // 2 - 1)
+            inv_timescales = torch.exp(-log_timescale_increment * torch.arange(num_channels // 2))
             scaled_time = torch.arange(encoder_config.tokens_per_chunk)[:, None] * inv_timescales
             return torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
 
@@ -230,13 +240,13 @@ class Qwen3ASREncoder(MegatronModule):
         check_config()
         config = build_transformer_config()
         super().__init__(config=config)
-        channels = encoder_config.downsample_hidden_size
+        num_channels = encoder_config.downsample_hidden_size
         conv_kwargs = {"kernel_size": 3, "stride": 2, "padding": 1, "dtype": config.params_dtype}
-        self.conv2d1 = torch.nn.Conv2d(1, channels, **conv_kwargs)
-        self.conv2d2 = torch.nn.Conv2d(channels, channels, **conv_kwargs)
-        self.conv2d3 = torch.nn.Conv2d(channels, channels, **conv_kwargs)
+        self.conv2d1 = torch.nn.Conv2d(1, num_channels, **conv_kwargs)
+        self.conv2d2 = torch.nn.Conv2d(num_channels, num_channels, **conv_kwargs)
+        self.conv2d3 = torch.nn.Conv2d(num_channels, num_channels, **conv_kwargs)
         self.conv_out = torch.nn.Linear(
-            encoder_config.conv_out_features,
+            encoder_config.num_conv_out_features,
             encoder_config.hidden_size,
             bias=False,
             dtype=config.params_dtype,
@@ -268,9 +278,11 @@ class Qwen3ASREncoder(MegatronModule):
         for conv in (self.conv2d1, self.conv2d2, self.conv2d3):
             # Hugging Face applies GELU here whatever activation_function says.
             hidden = torch.nn.functional.gelu(conv(hidden))
-        num_chunks, channels, frequency_bins, num_steps = hidden.shape
+        num_chunks, num_channels, num_frequency_bins, num_steps = hidden.shape
         hidden = self.conv_out(
-            hidden.permute(0, 3, 1, 2).reshape(num_chunks, num_steps, channels * frequency_bins)
+            hidden.permute(0, 3, 1, 2).reshape(
+                num_chunks, num_steps, num_channels * num_frequency_bins
+            )
         )
         hidden = hidden + self.position_embedding[:num_steps].to(hidden.dtype)
         # Keep the valid tokens: [num_tokens, 1, hidden_size] in Megatron's [sequence, batch].

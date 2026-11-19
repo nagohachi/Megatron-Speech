@@ -25,8 +25,9 @@ from tests.reference_comparison import TOLERANCES, calc_relative_error, take_sha
 
 logger = logging.getLogger(__name__)
 
-# Several chunks and windows, no frames, one chunk, a partial chunk and one frame.
-UTTERANCE_FRAMES = [250, 0, 100, 37, 1]
+# Mel frames of each utterance: several chunks and windows, no frames, one chunk, a partial
+# chunk and one frame.
+UTTERANCE_LENGTHS = [250, 0, 100, 37, 1]
 # Names of the convolutions and the linear layer after them, the same on both sides.
 CONVOLUTIONS = ("conv2d1", "conv2d2", "conv2d3", "conv_out")
 # Windows of 200 frames (26 tokens) so that the 250-frame utterance spans two of them.
@@ -148,17 +149,17 @@ def build_encoder(
 
 @pytest.fixture(name="mels")
 def build_mels() -> list[torch.Tensor]:
-    """fp32 log-mels of UTTERANCE_FRAMES frames, the same on every rank."""
+    """fp32 log-mels of UTTERANCE_LENGTHS frames, the same on every rank."""
     torch.manual_seed(1)
-    return [torch.randn(ENCODER_CONFIG.num_mel_bins, frames) for frames in UTTERANCE_FRAMES]
+    return [torch.randn(ENCODER_CONFIG.num_mel_bins, length) for length in UTTERANCE_LENGTHS]
 
 
 def run_reference(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tensor:
     """Pad the log-mels to a multiple of the chunk length with zeros and run Hugging Face's."""
-    chunk_frames = ENCODER_CONFIG.chunk_frames
-    padded_frames = -(-max(UTTERANCE_FRAMES) // chunk_frames) * chunk_frames
-    features = torch.zeros(len(mels), ENCODER_CONFIG.num_mel_bins, padded_frames)
-    mask = torch.zeros(len(mels), padded_frames, dtype=torch.long)
+    mel_frames_per_chunk = ENCODER_CONFIG.mel_frames_per_chunk
+    padded_length = -(-max(UTTERANCE_LENGTHS) // mel_frames_per_chunk) * mel_frames_per_chunk
+    features = torch.zeros(len(mels), ENCODER_CONFIG.num_mel_bins, padded_length)
+    mask = torch.zeros(len(mels), padded_length, dtype=torch.long)
     for index, mel in enumerate(mels):
         features[index, :, : mel.shape[1]] = mel
         mask[index, : mel.shape[1]] = 1
@@ -182,15 +183,15 @@ def copy_inputs_to_gpu(cpu_inputs: Qwen3ASREncoderInputs) -> Qwen3ASREncoderInpu
 @pytest.fixture(name="hf_window_bounds")
 def calc_hf_window_bounds() -> list[int]:
     """Cumulative token counts of the attention windows that Hugging Face computes."""
-    chunk_frames = ENCODER_CONFIG.chunk_frames
+    mel_frames_per_chunk = ENCODER_CONFIG.mel_frames_per_chunk
     chunk_lengths = [
-        min(chunk_frames, n - start)
-        for n in UTTERANCE_FRAMES
-        for start in range(0, n, chunk_frames)
+        min(mel_frames_per_chunk, n - start)
+        for n in UTTERANCE_LENGTHS
+        for start in range(0, n, mel_frames_per_chunk)
     ]
     return get_audio_cu_seqlens(
         torch.tensor(chunk_lengths),
-        torch.tensor(UTTERANCE_FRAMES),
+        torch.tensor(UTTERANCE_LENGTHS),
         ENCODER_CONFIG.n_window_infer,
         ENCODER_CONFIG.n_window,
     ).tolist()
@@ -199,8 +200,8 @@ def calc_hf_window_bounds() -> list[int]:
 @pytest.fixture(name="hf_token_counts")
 def calc_hf_token_counts() -> list[int]:
     """Encoder tokens per utterance by Hugging Face's length formula."""
-    frames = torch.tensor(UTTERANCE_FRAMES)
-    return _get_feat_extract_output_lengths(frames, ENCODER_CONFIG.n_window).tolist()
+    lengths = torch.tensor(UTTERANCE_LENGTHS)
+    return _get_feat_extract_output_lengths(lengths, ENCODER_CONFIG.n_window).tolist()
 
 
 def test_window_bounds_match_hf(
@@ -214,13 +215,13 @@ def test_longest_window_matches_hf(
     cpu_inputs: Qwen3ASREncoderInputs, hf_window_bounds: list[int]
 ) -> None:
     """max_seqlen is the longest of Hugging Face's windows."""
-    longest = max(end - start for start, end in pairwise(hf_window_bounds))
-    assert cpu_inputs.max_seqlen == longest
+    longest_window_length = max(end - start for start, end in pairwise(hf_window_bounds))
+    assert cpu_inputs.max_seqlen == longest_window_length
 
 
 def test_token_counts_match_hf(hf_token_counts: list[int]) -> None:
     """calc_num_tokens agrees with Hugging Face's length formula for every utterance."""
-    assert [ENCODER_CONFIG.calc_num_tokens(n) for n in UTTERANCE_FRAMES] == hf_token_counts
+    assert [ENCODER_CONFIG.calc_num_tokens(n) for n in UTTERANCE_LENGTHS] == hf_token_counts
 
 
 def test_token_index_selects_hf_token_count(
@@ -236,7 +237,7 @@ def test_chunks_hold_the_frames(
     """The chunks hold every frame once, in order, and zeros after the last frame."""
     chunks = iter(cpu_inputs.input_features)
     for mel in mels:
-        num_chunks = -(-mel.shape[1] // ENCODER_CONFIG.chunk_frames)
+        num_chunks = -(-mel.shape[1] // ENCODER_CONFIG.mel_frames_per_chunk)
         # The empty tensor lets an utterance without frames take no chunks.
         frames = torch.cat(
             [next(chunks) for _ in range(num_chunks)] + [mel.new_zeros(mel.shape[0], 0)], dim=1
@@ -246,10 +247,10 @@ def test_chunks_hold_the_frames(
     assert next(chunks, None) is None
 
 
-@pytest.mark.parametrize("frames", [[], [0, 0]], ids=["no-utterances", "empty-utterances"])
-def test_rejects_batch_without_frames(frames: list[int]) -> None:
+@pytest.mark.parametrize("lengths", [[], [0, 0]], ids=["no-utterances", "empty-utterances"])
+def test_rejects_batch_without_frames(lengths: list[int]) -> None:
     """A batch without frames has no encoder inputs; MIMO skips the encoder for it."""
-    mels = [torch.zeros(ENCODER_CONFIG.num_mel_bins, n) for n in frames]
+    mels = [torch.zeros(ENCODER_CONFIG.num_mel_bins, n) for n in lengths]
     with pytest.raises(ValueError, match="no utterance has frames"):
         Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG)
 
