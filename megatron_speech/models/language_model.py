@@ -37,6 +37,56 @@ class SpeechLanguageModel(GPTModel):
         - no ``labels``: ``GPTModel``'s logits ``[batch, sequence, vocabulary]``, split over the TP
           ranks along the vocabulary.
         """
+
+        def calc_target_loss(
+            *,
+            hidden_states: torch.Tensor,
+            output_layer: ColumnParallelLinear | TELMHeadColumnParallelLinear,
+            output_weight: torch.Tensor | None,
+            labels: torch.Tensor,
+            loss_mask: torch.Tensor,
+            input_ids: torch.Tensor | None,
+            position_ids: torch.Tensor | None,
+            attention_mask: torch.Tensor | None,
+            decoder_input: torch.Tensor | None,
+            inference_context: BaseInferenceContext | None,
+            packed_seq_params: PackedSeqParams | None,
+            runtime_gather_output: bool | None,
+            context: None,
+            compute_language_model_loss: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+            scale_logits: Callable[[torch.Tensor], torch.Tensor],
+            config: TransformerConfig,
+        ) -> torch.Tensor:
+            """Calculate the loss ``[batch, sequence]`` at the positions where ``loss_mask`` is set.
+
+            ``GPTModel`` calls this as its ``output_processor`` with every argument it has.
+            ``hidden_states`` is ``[sequence, batch, hidden]``, split along the sequence over the TP
+            ranks under sequence parallelism. The other positions get a loss of 0.
+            """
+            sequence_parallel = output_layer.sequence_parallel
+            if sequence_parallel:
+                # The output layer below runs without sequence parallelism and all-reduces the
+                # gradient of its input, so the backward of this gather only splits it.
+                hidden_states = gather_from_sequence_parallel_region(
+                    hidden_states, tensor_parallel_output_grad=False, group=output_layer.tp_group
+                )
+            targets = loss_mask.transpose(0, 1).bool()  # [sequence, batch], as hidden_states
+            output_layer.sequence_parallel = False
+            try:
+                logits, _ = output_layer(
+                    hidden_states[targets].unsqueeze(1),
+                    weight=output_weight,
+                    runtime_gather_output=runtime_gather_output,
+                )
+            finally:
+                output_layer.sequence_parallel = sequence_parallel
+            target_labels = labels.transpose(0, 1)[targets].unsqueeze(0)
+            target_loss = compute_language_model_loss(target_labels, scale_logits(logits))
+            # masked_scatter puts the losses back in the order in which hidden_states[targets]
+            # took the positions.
+            loss = target_loss.new_zeros(targets.shape).masked_scatter(targets, target_loss)
+            return loss.transpose(0, 1).contiguous()
+
         return super().forward(
             input_ids,
             position_ids,
@@ -46,55 +96,5 @@ class SpeechLanguageModel(GPTModel):
             packed_seq_params=packed_seq_params,
             loss_mask=loss_mask,
             mtp_input_mask=mtp_input_mask,
-            output_processor=None if labels is None or loss_mask is None else self.calc_target_loss,
+            output_processor=None if labels is None or loss_mask is None else calc_target_loss,
         )
-
-    def calc_target_loss(
-        self,
-        *,
-        hidden_states: torch.Tensor,
-        output_layer: ColumnParallelLinear | TELMHeadColumnParallelLinear,
-        output_weight: torch.Tensor | None,
-        labels: torch.Tensor,
-        loss_mask: torch.Tensor,
-        input_ids: torch.Tensor | None,
-        position_ids: torch.Tensor | None,
-        attention_mask: torch.Tensor | None,
-        decoder_input: torch.Tensor | None,
-        inference_context: BaseInferenceContext | None,
-        packed_seq_params: PackedSeqParams | None,
-        runtime_gather_output: bool | None,
-        context: None,
-        compute_language_model_loss: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
-        scale_logits: Callable[[torch.Tensor], torch.Tensor],
-        config: TransformerConfig,
-    ) -> torch.Tensor:
-        """Calculate the loss ``[batch, sequence]`` at the positions where ``loss_mask`` is set.
-
-        ``GPTModel`` calls this as its ``output_processor`` with every argument it has.
-        ``hidden_states`` is ``[sequence, batch, hidden]``, split along the sequence over the TP
-        ranks under sequence parallelism. The other positions get a loss of 0.
-        """
-        sequence_parallel = output_layer.sequence_parallel
-        if sequence_parallel:
-            # The output layer below runs without sequence parallelism and all-reduces the
-            # gradient of its input, so the backward of this gather only splits it.
-            hidden_states = gather_from_sequence_parallel_region(
-                hidden_states, tensor_parallel_output_grad=False, group=output_layer.tp_group
-            )
-        targets = loss_mask.transpose(0, 1).bool()  # [sequence, batch], as hidden_states
-        output_layer.sequence_parallel = False
-        try:
-            logits, _ = output_layer(
-                hidden_states[targets].unsqueeze(1),
-                weight=output_weight,
-                runtime_gather_output=runtime_gather_output,
-            )
-        finally:
-            output_layer.sequence_parallel = sequence_parallel
-        target_labels = labels.transpose(0, 1)[targets].unsqueeze(0)
-        target_loss = compute_language_model_loss(target_labels, scale_logits(logits))
-        # masked_scatter puts the losses back in the order in which hidden_states[targets]
-        # took the positions.
-        loss = target_loss.new_zeros(targets.shape).masked_scatter(targets, target_loss)
-        return loss.transpose(0, 1).contiguous()
