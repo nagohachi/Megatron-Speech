@@ -64,12 +64,6 @@ class Batch:
     encoder_inputs: Qwen3ASREncoderInputs | None
 
 
-@pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
-def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Return the parameter dtype of the model under test."""
-    return request.param
-
-
 @pytest.fixture(name="config")
 def build_config(dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLLMConfig:
     """Build a small speech LLM config: a two-layer LLM with rotary positions."""

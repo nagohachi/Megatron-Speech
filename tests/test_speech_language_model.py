@@ -38,12 +38,6 @@ class Batch:
     packed_seq_params: PackedSeqParams | None
 
 
-@pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
-def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Return the parameter dtype of the model under test."""
-    return request.param
-
-
 @pytest.fixture(name="sequence_parallel", params=[False, True], ids=["no-sp", "sp"])
 def get_sequence_parallel(request: pytest.FixtureRequest, tensor_parallel_size: int) -> bool:
     """Return whether the models run with sequence parallelism, which needs two TP ranks."""

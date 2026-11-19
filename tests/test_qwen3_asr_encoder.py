@@ -94,12 +94,6 @@ def calc_split_dim(name: str) -> int | None:
     return None
 
 
-@pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
-def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Return the parameter dtype of the encoder under test."""
-    return request.param
-
-
 @pytest.fixture(name="reference")
 def build_reference() -> HFEncoder:
     """Build the Hugging Face encoder in fp32 with random weights, the same on every rank."""

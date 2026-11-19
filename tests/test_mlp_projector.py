@@ -33,12 +33,6 @@ def get_projector_config(request: pytest.FixtureRequest) -> MLPProjectorConfig:
     return request.param
 
 
-@pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
-def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Return the parameter dtype of the projector under test."""
-    return request.param
-
-
 @pytest.fixture(name="reference")
 def build_reference(projector_config: MLPProjectorConfig) -> list[torch.nn.Linear]:
     """Build fp32 ``torch.nn.Linear`` layers with random weights, the same on every rank."""
