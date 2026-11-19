@@ -1,10 +1,12 @@
 import logging
 from dataclasses import dataclass
+from itertools import accumulate
 
 import pytest
 import torch
 from megatron.core.models.gpt import GPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer import TransformerConfig
 
@@ -17,16 +19,23 @@ logger = logging.getLogger(__name__)
 VOCAB_SIZE = 128
 BATCH_SIZE = 2
 SEQUENCE_LENGTH = 16
+# Sequences that the thd batch packs into one row of SEQUENCE_LENGTH tokens.
+PACKED_SEQUENCE_LENGTHS = [7, 5, 4]
 
 
 @dataclass
 class Batch:
-    """Token ids, positions, labels and loss mask of a batch, each ``[batch, sequence]``."""
+    """Token ids, positions, labels and loss mask of a batch, each ``[batch, sequence]``.
+
+    ``packed_seq_params`` delimits the sequences packed into a row, or is None for one
+    sequence per row.
+    """
 
     input_ids: torch.Tensor
     position_ids: torch.Tensor
     labels: torch.Tensor
     loss_mask: torch.Tensor
+    packed_seq_params: PackedSeqParams | None
 
 
 @pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
@@ -96,31 +105,62 @@ def get_target_pattern(request: pytest.FixtureRequest) -> str:
     return request.param
 
 
-@pytest.fixture(name="batch")
-def build_batch(target_pattern: str) -> Batch:
-    """Build a batch whose target positions ``target_pattern`` names.
+@pytest.fixture(name="qkv_format", params=["sbhd", "thd"])
+def get_qkv_format(request: pytest.FixtureRequest) -> str:
+    """Return how the batch holds its sequences: one per row or packed into one row."""
+    return request.param
 
-    ``some`` puts the targets of the first sequence at 10 to 15 and of the second at 3 to 5,
-    ``all`` makes every position a target, and ``none`` no position.
+
+@pytest.fixture(name="batch")
+def build_batch(target_pattern: str, qkv_format: str) -> Batch:
+    """Build a batch in the layout ``qkv_format`` with the targets ``target_pattern`` names.
+
+    ``sbhd`` holds two sequences of 16 tokens, one per row; ``some`` puts the targets of the
+    first at 10 to 15 and of the second at 3 to 5. ``thd`` packs sequences of 7, 5 and 4 tokens
+    into one row, each with positions from 0; ``some`` puts the targets at the last two tokens
+    of each sequence. ``all`` makes every position a target, and ``none`` no position.
     """
     torch.manual_seed(1)
-    loss_mask = torch.zeros(BATCH_SIZE, SEQUENCE_LENGTH, device="cuda")
-    if target_pattern == "some":
+    packed_seq_params = None
+    if qkv_format == "thd":
+        cu_seqlens = [0, *accumulate(PACKED_SEQUENCE_LENGTHS)]
+        packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=torch.tensor(cu_seqlens, dtype=torch.int32, device="cuda"),
+            cu_seqlens_kv=torch.tensor(cu_seqlens, dtype=torch.int32, device="cuda"),
+            max_seqlen_q=max(PACKED_SEQUENCE_LENGTHS),
+            max_seqlen_kv=max(PACKED_SEQUENCE_LENGTHS),
+        )
+        position_ids = torch.cat([torch.arange(n) for n in PACKED_SEQUENCE_LENGTHS])[None].cuda()
+    else:
+        position_ids = torch.arange(SEQUENCE_LENGTH, device="cuda").expand(BATCH_SIZE, -1)
+    loss_mask = torch.zeros(position_ids.shape, device="cuda")
+    if target_pattern == "all":
+        loss_mask[:] = 1
+    elif target_pattern == "some" and qkv_format == "thd":
+        for end in cu_seqlens[1:]:
+            loss_mask[0, end - 2 : end] = 1
+    elif target_pattern == "some":
         loss_mask[0, 10:] = 1
         loss_mask[1, 3:6] = 1
-    elif target_pattern == "all":
-        loss_mask[:] = 1
     return Batch(
-        input_ids=torch.randint(VOCAB_SIZE, (BATCH_SIZE, SEQUENCE_LENGTH), device="cuda"),
-        position_ids=torch.arange(SEQUENCE_LENGTH, device="cuda").expand(BATCH_SIZE, -1),
-        labels=torch.randint(VOCAB_SIZE, (BATCH_SIZE, SEQUENCE_LENGTH), device="cuda"),
+        input_ids=torch.randint(VOCAB_SIZE, position_ids.shape, device="cuda"),
+        position_ids=position_ids,
+        labels=torch.randint(VOCAB_SIZE, position_ids.shape, device="cuda"),
         loss_mask=loss_mask,
+        packed_seq_params=packed_seq_params,
     )
 
 
 def run_reference(reference: GPTModel, batch: Batch) -> torch.Tensor:
     """Run ``GPTModel``, which computes the logits and the loss at every position."""
-    return reference(batch.input_ids, batch.position_ids, None, labels=batch.labels)
+    return reference(
+        batch.input_ids,
+        batch.position_ids,
+        None,
+        labels=batch.labels,
+        packed_seq_params=batch.packed_seq_params,
+    )
 
 
 def calc_loss_at_targets(model: SpeechLanguageModel, batch: Batch) -> torch.Tensor:
@@ -131,6 +171,7 @@ def calc_loss_at_targets(model: SpeechLanguageModel, batch: Batch) -> torch.Tens
         None,
         labels=batch.labels,
         loss_mask=batch.loss_mask,
+        packed_seq_params=batch.packed_seq_params,
     )
 
 
@@ -148,9 +189,11 @@ def calc_model_loss(model: SpeechLanguageModel, batch: Batch) -> torch.Tensor:
         return calc_loss_at_targets(model, batch)
 
 
-def test_loss_has_gpt_model_shape(model_loss: torch.Tensor, reference_loss: torch.Tensor) -> None:
+def test_loss_has_gpt_model_shape(
+    model_loss: torch.Tensor, reference_loss: torch.Tensor, batch: Batch
+) -> None:
     """Check that the loss is ``[batch, sequence]``, as ``GPTModel``'s."""
-    assert model_loss.shape == reference_loss.shape == (BATCH_SIZE, SEQUENCE_LENGTH)
+    assert model_loss.shape == reference_loss.shape == batch.loss_mask.shape
 
 
 def test_loss_matches_gpt_model_at_targets(
@@ -192,8 +235,12 @@ def test_returns_logits_without_labels(
 ) -> None:
     """Check that without labels the model returns ``GPTModel``'s logits."""
     with torch.no_grad():
-        expected = reference(batch.input_ids, batch.position_ids, None)
-        actual = model(batch.input_ids, batch.position_ids, None)
+        expected = reference(
+            batch.input_ids, batch.position_ids, None, packed_seq_params=batch.packed_seq_params
+        )
+        actual = model(
+            batch.input_ids, batch.position_ids, None, packed_seq_params=batch.packed_seq_params
+        )
     assert actual.shape == expected.shape
     error = calc_relative_error(actual, expected)
     logger.info("%s: logits max relative error %.2e", dtype, error)
@@ -220,7 +267,13 @@ def test_returns_gpt_model_loss_without_loss_mask(
 ) -> None:
     """Check that with labels but without a loss mask the model returns ``GPTModel``'s loss."""
     with torch.no_grad():
-        actual = model(batch.input_ids, batch.position_ids, None, labels=batch.labels)
+        actual = model(
+            batch.input_ids,
+            batch.position_ids,
+            None,
+            labels=batch.labels,
+            packed_seq_params=batch.packed_seq_params,
+        )
     error = calc_relative_error(actual, reference_loss)
     logger.info("%s: loss without loss mask max relative error %.2e", dtype, error)
     assert error < TOLERANCES[dtype]
