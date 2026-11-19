@@ -51,7 +51,7 @@ def interleave_qkv(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) 
 
 
 def map_hf_tensors(hf_tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    """Hugging Face weights or gradients under the encoder's parameter names, before splitting.
+    """Map Hugging Face weights or gradients to the encoder's parameter names, before splitting.
 
     The encoder's names come from Megatron's layers (``transformer.layers.0.self_attention.
     linear_qkv.weight``); only they tell which fused weight holds which Hugging Face weights.
@@ -82,7 +82,7 @@ def map_hf_tensors(hf_tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tenso
 
 
 def get_split_dim(name: str) -> int | None:
-    """Dim of the encoder parameter ``name`` that tensor parallelism splits, if any."""
+    """Return the dim of the encoder parameter ``name`` that TP splits, if any."""
     if name.endswith(
         ("linear_qkv.weight", "linear_qkv.bias", "linear_fc1.weight", "linear_fc1.bias")
     ):
@@ -94,13 +94,13 @@ def get_split_dim(name: str) -> int | None:
 
 @pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
 def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Parameter dtype of the encoder under test."""
+    """Return the parameter dtype of the encoder under test."""
     return request.param
 
 
 @pytest.fixture(name="reference")
 def build_reference() -> HFEncoder:
-    """Hugging Face encoder in fp32 with random weights, the same on every rank."""
+    """Build the Hugging Face encoder in fp32 with random weights, the same on every rank."""
     torch.manual_seed(0)
     hf_config = HFEncoderConfig(
         num_mel_bins=ENCODER_CONFIG.num_mel_bins,
@@ -125,7 +125,7 @@ def build_reference() -> HFEncoder:
 def build_encoder(
     reference: HFEncoder, dtype: torch.dtype, tensor_parallel_size: int
 ) -> Qwen3ASREncoder:
-    """Qwen3ASREncoder that holds this rank's shards of the reference weights."""
+    """Build a Qwen3ASREncoder that holds this rank's shards of the reference weights."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
@@ -149,7 +149,7 @@ def build_encoder(
 
 @pytest.fixture(name="mels")
 def build_mels() -> list[torch.Tensor]:
-    """fp32 log-mels of UTTERANCE_LENGTHS frames, the same on every rank."""
+    """Build fp32 log-mels of UTTERANCE_LENGTHS frames, the same on every rank."""
     torch.manual_seed(1)
     return [torch.randn(ENCODER_CONFIG.num_mel_bins, length) for length in UTTERANCE_LENGTHS]
 
@@ -170,19 +170,19 @@ def run_reference(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tenso
 
 @pytest.fixture(name="cpu_inputs")
 def build_cpu_inputs(mels: list[torch.Tensor]) -> Qwen3ASREncoderInputs:
-    """Encoder inputs of the test utterances, on the CPU as the data loader makes them."""
+    """Build the encoder inputs of the test utterances on the CPU, as the data loader does."""
     return Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG)
 
 
 @pytest.fixture(name="inputs")
 def copy_inputs_to_gpu(cpu_inputs: Qwen3ASREncoderInputs) -> Qwen3ASREncoderInputs:
-    """Encoder inputs of the test utterances on the GPU."""
+    """Copy the encoder inputs of the test utterances to the GPU."""
     return cpu_inputs.to("cuda")
 
 
 @pytest.fixture(name="hf_window_bounds")
 def calc_hf_window_bounds() -> list[int]:
-    """Cumulative encoder frame counts of the attention windows that Hugging Face computes."""
+    """Calculate the cumulative encoder frame counts of the windows as Hugging Face does."""
     mel_frames_per_chunk = ENCODER_CONFIG.mel_frames_per_chunk
     chunk_lengths = [
         min(mel_frames_per_chunk, n - start)
@@ -199,7 +199,7 @@ def calc_hf_window_bounds() -> list[int]:
 
 @pytest.fixture(name="hf_encoder_frame_counts")
 def calc_hf_encoder_frame_counts() -> list[int]:
-    """Encoder frames per utterance by Hugging Face's length formula."""
+    """Calculate the encoder frames of each utterance with Hugging Face's length formula."""
     lengths = torch.tensor(UTTERANCE_LENGTHS)
     return _get_feat_extract_output_lengths(lengths, ENCODER_CONFIG.n_window).tolist()
 
@@ -207,20 +207,20 @@ def calc_hf_encoder_frame_counts() -> list[int]:
 def test_window_bounds_match_hf(
     cpu_inputs: Qwen3ASREncoderInputs, hf_window_bounds: list[int]
 ) -> None:
-    """The attention windows start and end where Hugging Face's do."""
+    """Check that the attention windows start and end where Hugging Face's do."""
     assert cpu_inputs.cu_seqlens.tolist() == hf_window_bounds
 
 
 def test_longest_window_matches_hf(
     cpu_inputs: Qwen3ASREncoderInputs, hf_window_bounds: list[int]
 ) -> None:
-    """max_seqlen is the longest of Hugging Face's windows."""
+    """Check that max_seqlen is the length of the longest of Hugging Face's windows."""
     longest_window_length = max(end - start for start, end in pairwise(hf_window_bounds))
     assert cpu_inputs.max_seqlen == longest_window_length
 
 
 def test_encoder_frame_counts_match_hf(hf_encoder_frame_counts: list[int]) -> None:
-    """calc_num_encoder_frames agrees with Hugging Face's length formula for every utterance."""
+    """Check calc_num_encoder_frames against Hugging Face's length formula for each utterance."""
     num_encoder_frames = [ENCODER_CONFIG.calc_num_encoder_frames(n) for n in UTTERANCE_LENGTHS]
     assert num_encoder_frames == hf_encoder_frame_counts
 
@@ -228,14 +228,14 @@ def test_encoder_frame_counts_match_hf(hf_encoder_frame_counts: list[int]) -> No
 def test_encoder_frame_index_selects_hf_count(
     cpu_inputs: Qwen3ASREncoderInputs, hf_encoder_frame_counts: list[int]
 ) -> None:
-    """encoder_frame_index keeps as many encoder frames as Hugging Face's encoder outputs."""
+    """Check that encoder_frame_index keeps as many encoder frames as Hugging Face outputs."""
     assert cpu_inputs.encoder_frame_index.numel() == sum(hf_encoder_frame_counts)
 
 
 def test_chunks_hold_the_frames(
     cpu_inputs: Qwen3ASREncoderInputs, mels: list[torch.Tensor]
 ) -> None:
-    """The chunks hold every frame once, in order, and zeros after the last frame."""
+    """Check that the chunks hold every frame once, in order, and zeros after the last frame."""
     chunks = iter(cpu_inputs.input_features)
     for mel in mels:
         num_chunks = -(-mel.shape[1] // ENCODER_CONFIG.mel_frames_per_chunk)
@@ -250,7 +250,7 @@ def test_chunks_hold_the_frames(
 
 @pytest.mark.parametrize("lengths", [[], [0, 0]], ids=["no-utterances", "empty-utterances"])
 def test_rejects_batch_without_frames(lengths: list[int]) -> None:
-    """A batch without frames has no encoder inputs; MIMO skips the encoder for it."""
+    """Check that a batch without frames raises ValueError; MIMO skips the encoder for it."""
     mels = [torch.zeros(ENCODER_CONFIG.num_mel_bins, n) for n in lengths]
     with pytest.raises(ValueError, match="no utterance has frames"):
         Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG)
@@ -264,7 +264,7 @@ def test_output_matches_hf(
     inputs: Qwen3ASREncoderInputs,
     dtype: torch.dtype,
 ) -> None:
-    """The encoder output equals Hugging Face's for the same utterances."""
+    """Check that the encoder output equals Hugging Face's for the same utterances."""
     with torch.no_grad():
         expected = run_reference(reference, mels)
         actual = encoder(**vars(inputs))
@@ -282,7 +282,7 @@ def test_gradients_match_hf(
     inputs: Qwen3ASREncoderInputs,
     dtype: torch.dtype,
 ) -> None:
-    """Gradients of every weight equal the reference ones, combined and split as the weights."""
+    """Check that weight gradients equal the reference ones, combined and split as the weights."""
     expected = run_reference(reference, mels)
     actual = encoder(**vars(inputs))
     grad_output = torch.randn_like(expected)
@@ -339,7 +339,7 @@ class InvalidConfig:
     ],
 )
 def test_config_rejects_invalid_values(invalid: InvalidConfig) -> None:
-    """Values that the encoder or its inputs cannot use raise ValueError at construction."""
+    """Check that values the encoder or its inputs cannot use raise ValueError at construction."""
     with pytest.raises(ValueError, match=re.escape(invalid.message)):
         replace(ENCODER_CONFIG, **invalid.changes)
 
@@ -366,7 +366,7 @@ class UnsplittableConfig:
     ],
 )
 def test_rejects_sizes_not_divisible_by_tp(unsplittable: UnsplittableConfig) -> None:
-    """Heads and MLP features that do not split evenly over the TP ranks raise ValueError."""
+    """Check that heads and MLP features that TP cannot split evenly raise ValueError."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
@@ -379,7 +379,7 @@ def test_rejects_sizes_not_divisible_by_tp(unsplittable: UnsplittableConfig) -> 
 
 @pytest.mark.gpu
 def test_rejects_pg_collection_of_another_tp_size(tensor_parallel_size: int) -> None:
-    """The TP group in pg_collection must have as many ranks as llm_config says."""
+    """Check that a pg_collection TP group of another size than llm_config raises ValueError."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,

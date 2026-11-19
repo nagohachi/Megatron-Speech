@@ -46,7 +46,7 @@ class Recipe:
 
     # -- hooks -------------------------------------------------------------------------------
     def build_megatron_arg_dict(self) -> ConfigDict:
-        """Megatron CLI arguments; recipes add the ones derived from the model."""
+        """Build the Megatron CLI arguments; recipes add the ones derived from the model."""
         return dict(self.cfg["megatron"])
 
     def get_extra_args_provider(self) -> Callable[[ArgumentParser], ArgumentParser] | None:

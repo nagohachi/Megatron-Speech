@@ -36,26 +36,26 @@ class Reference:
 
 
 def describe_config(config: QFormerProjectorConfig) -> str:
-    """Short name of a config for test ids and logs, such as ``2layers-2queries-window4``."""
+    """Name a config for test ids and logs, such as ``2layers-2queries-window4``."""
     window = "whole-utterance" if config.window_size is None else f"window{config.window_size}"
     return f"{config.num_layers}layers-{config.num_queries}queries-{window}"
 
 
 @pytest.fixture(name="projector_config", params=PROJECTOR_CONFIGS, ids=describe_config)
 def get_projector_config(request: pytest.FixtureRequest) -> QFormerProjectorConfig:
-    """A config that cuts each utterance into several windows, or one that reads it whole."""
+    """Return a config that cuts each utterance into windows, or one that reads it whole."""
     return request.param
 
 
 @pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
 def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Parameter dtype of the projector under test."""
+    """Return the parameter dtype of the projector under test."""
     return request.param
 
 
 @pytest.fixture(name="reference")
 def build_reference(projector_config: QFormerProjectorConfig) -> Reference:
-    """Random reference weights, the same on every rank."""
+    """Build random reference weights, the same on every rank."""
     torch.manual_seed(0)
     hf_config = Blip2QFormerConfig(
         hidden_size=projector_config.hidden_size,
@@ -85,7 +85,7 @@ def build_reference(projector_config: QFormerProjectorConfig) -> Reference:
 
 
 def list_reference_parameters(reference: Reference) -> dict[str, torch.nn.Parameter]:
-    """Reference parameters under Hugging Face's Q-Former names, with the projection and queries."""
+    """List the Q-Former's parameters under Hugging Face's names, the projection and the queries."""
     return {
         **dict(reference.qformer.named_parameters()),
         "projection.weight": reference.projection.weight,
@@ -97,7 +97,7 @@ def list_reference_parameters(reference: Reference) -> dict[str, torch.nn.Parame
 def map_hf_tensors(
     hf_tensors: dict[str, torch.Tensor], config: QFormerProjectorConfig
 ) -> dict[str, torch.Tensor]:
-    """Reference weights or gradients under the projector's parameter names, before splitting."""
+    """Map reference weights or gradients to the projector's parameter names, before splitting."""
     mapped = {
         name: hf_tensors[name] for name in ("query_tokens", "projection.weight", "projection.bias")
     }
@@ -131,7 +131,7 @@ def map_hf_tensors(
 
 
 def get_split_dim(name: str) -> int | None:
-    """Dim of the projector parameter ``name`` that tensor parallelism splits, if any."""
+    """Return the dim of the projector parameter ``name`` that TP splits, if any."""
     column_parallel = ("query", "key", "value", "fc1", "projection")
     if name.endswith(
         tuple(f"{layer}.{s}" for layer in column_parallel for s in ("weight", "bias"))
@@ -149,7 +149,7 @@ def build_projector(
     dtype: torch.dtype,
     tensor_parallel_size: int,
 ) -> QFormerProjector:
-    """QFormerProjector that holds this rank's shards of the reference weights."""
+    """Build a QFormerProjector that holds this rank's shards of the reference weights."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
@@ -174,7 +174,7 @@ def build_projector(
 
 @pytest.fixture(name="frames")
 def build_frames() -> torch.Tensor:
-    """fp32 encoder frames of UTTERANCE_LENGTHS, the same on every rank."""
+    """Build fp32 encoder frames of UTTERANCE_LENGTHS, the same on every rank."""
     torch.manual_seed(1)
     return torch.randn(sum(UTTERANCE_LENGTHS), 48, device="cuda", requires_grad=True)
 
@@ -212,7 +212,7 @@ def test_output_matches_hf(
     frames: torch.Tensor,
     dtype: torch.dtype,
 ) -> None:
-    """The projector output equals the Hugging Face Q-Former followed by the projection."""
+    """Check that the output equals the Hugging Face Q-Former followed by the projection."""
     cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
     with torch.no_grad():
         expected = run_reference(reference, frames, projector_config.window_size)
@@ -232,7 +232,7 @@ def test_gradients_match_hf(
     frames: torch.Tensor,
     dtype: torch.dtype,
 ) -> None:
-    """Gradients of the input and of every parameter equal the reference ones."""
+    """Check that gradients of the input and of every parameter equal the reference ones."""
     cu_seqlens = torch.tensor(CU_SEQLENS, dtype=torch.int32, device="cuda")
     projector_frames = frames.detach().to(dtype).requires_grad_()
     expected = run_reference(reference, frames, projector_config.window_size)
@@ -264,7 +264,7 @@ def test_gradients_match_hf(
 
 @pytest.mark.parametrize("cu_seqlens", [[0], [0, 0]], ids=["no-utterances", "empty-utterance"])
 def test_accepts_no_frames(tensor_parallel_size: int, cu_seqlens: list[int]) -> None:
-    """No utterances, or one utterance without frames, give no output vectors."""
+    """Check that no utterances, or one utterance without frames, give no output vectors."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
@@ -280,7 +280,7 @@ def test_accepts_no_frames(tensor_parallel_size: int, cu_seqlens: list[int]) -> 
 
 
 def test_rejects_heads_not_divisible_by_tp(tensor_parallel_size: int) -> None:
-    """Attention heads that do not split evenly over the TP ranks raise ValueError."""
+    """Check that attention heads that TP cannot split evenly raise ValueError."""
     if tensor_parallel_size == 1:
         pytest.skip("every head count splits over one rank")
     llm_config = TransformerConfig(
@@ -302,7 +302,7 @@ def test_rejects_heads_not_divisible_by_tp(tensor_parallel_size: int) -> None:
     "field", ["num_layers", "num_queries", "cross_attention_frequency", "window_size"]
 )
 def test_rejects_counts_below_one(field: str) -> None:
-    """Layer, query, cross-attention and window counts below one raise ValueError."""
+    """Check that layer, query, cross-attention and window counts below one raise ValueError."""
     llm_config = TransformerConfig(num_layers=1, hidden_size=64, num_attention_heads=1)
     projector_config = replace(BASE_CONFIG, **{field: 0})
     with pytest.raises(ValueError, match=field):

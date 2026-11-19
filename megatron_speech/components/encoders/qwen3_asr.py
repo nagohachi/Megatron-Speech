@@ -95,7 +95,7 @@ class Qwen3ASREncoderConfig:
         return self.downsample_hidden_size * num_frequency_bins
 
     def calc_num_encoder_frames(self, num_mel_frames: int) -> int:
-        """Encoder frames of an utterance of ``num_mel_frames`` mel frames.
+        """Count the encoder frames that an utterance of ``num_mel_frames`` mel frames gives.
 
         Every chunk goes through three convolutions with kernel 3, stride 2 and padding 1.
         """
@@ -170,7 +170,7 @@ class Qwen3ASREncoderInputs:
         )
 
     def to(self, device: torch.device | str) -> Self:
-        """Copy of the inputs with the tensors on ``device``."""
+        """Return a copy of the inputs with the tensors moved to ``device``."""
         return replace(
             self,
             input_features=self.input_features.to(device),
@@ -229,7 +229,7 @@ class Qwen3ASREncoder(MegatronModule):
             return torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
 
         def build_transformer_config() -> TransformerConfig:
-            """Pre-LayerNorm layers with biases, LayerNorm and the configured MLP activation."""
+            """Build the layers' config: pre-LayerNorm, biases, the configured MLP activation."""
             return build_component_transformer_config(
                 llm_config,
                 num_layers=encoder_config.num_layers,

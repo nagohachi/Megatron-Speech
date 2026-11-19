@@ -20,5 +20,5 @@ def take_shard(tensor: torch.Tensor, dim: int | None) -> torch.Tensor:
 
 
 def calc_relative_error(value: torch.Tensor, target: torch.Tensor) -> float:
-    """Largest absolute difference divided by the largest absolute target value."""
+    """Divide the largest absolute difference by the largest absolute value of ``target``."""
     return ((value.float() - target).abs().max() / target.abs().max()).item()

@@ -28,19 +28,19 @@ PROJECTOR_CONFIGS = [
     ids=lambda config: f"{config.num_layers}layers-{config.activation}",
 )
 def build_projector_config(request: pytest.FixtureRequest) -> MLPProjectorConfig:
-    """Projector config with one to three layers."""
+    """Return a projector config with one to three layers."""
     return request.param
 
 
 @pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
 def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Parameter dtype of the projector under test."""
+    """Return the parameter dtype of the projector under test."""
     return request.param
 
 
 @pytest.fixture(name="reference")
 def build_reference(projector_config: MLPProjectorConfig) -> list[torch.nn.Linear]:
-    """fp32 ``torch.nn.Linear`` layers with random weights, the same on every rank."""
+    """Build fp32 ``torch.nn.Linear`` layers with random weights, the same on every rank."""
     torch.manual_seed(0)
     sizes = [
         projector_config.input_size,
@@ -51,7 +51,7 @@ def build_reference(projector_config: MLPProjectorConfig) -> list[torch.nn.Linea
 
 
 def get_split_dim(index: int) -> int:
-    """Weight dim that layer ``index`` splits: output features (0) or input features (1)."""
+    """Return the weight dim that layer ``index`` splits: output (0) or input features (1)."""
     return 0 if index % 2 == 0 else 1
 
 
@@ -62,7 +62,7 @@ def build_projector(
     dtype: torch.dtype,
     tensor_parallel_size: int,
 ) -> MLPProjector:
-    """MLPProjector that holds this rank's shards of the reference weights."""
+    """Build an MLPProjector that holds this rank's shards of the reference weights."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
@@ -85,7 +85,7 @@ def build_projector(
 
 @pytest.fixture(name="inputs")
 def build_inputs() -> torch.Tensor:
-    """fp32 ``[10, 48]`` input, the same on every rank."""
+    """Build an fp32 ``[10, 48]`` input, the same on every rank."""
     torch.manual_seed(1)
     return torch.randn(10, 48, device="cuda", requires_grad=True)
 
@@ -108,7 +108,7 @@ def test_output_matches_torch(
     inputs: torch.Tensor,
     dtype: torch.dtype,
 ) -> None:
-    """The projector output equals the reference layers' output."""
+    """Check that the projector output equals the reference layers' output."""
     with torch.no_grad():
         expected = run_reference(reference, inputs, projector_config.activation)
         actual = projector(inputs.to(dtype))
@@ -128,7 +128,7 @@ def test_gradients_match_torch(
     inputs: torch.Tensor,
     dtype: torch.dtype,
 ) -> None:
-    """Gradients of the input and of every weight equal the reference ones."""
+    """Check that gradients of the input and of every weight equal the reference ones."""
     projector_inputs = inputs.detach().to(dtype).requires_grad_()
     expected = run_reference(reference, inputs, projector_config.activation)
     actual = projector(projector_inputs)
@@ -150,7 +150,7 @@ def test_gradients_match_torch(
 
 
 def test_accepts_zero_frames(tensor_parallel_size: int) -> None:
-    """A batch without audio gives the projector no encoder frames."""
+    """Check that the projector accepts no encoder frames, which a batch without audio gives."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
@@ -162,7 +162,7 @@ def test_accepts_zero_frames(tensor_parallel_size: int) -> None:
 
 
 def test_rejects_features_not_divisible_by_tp(tensor_parallel_size: int) -> None:
-    """A column-parallel layer whose output features do not split evenly raises ValueError."""
+    """Check that a column-parallel layer whose outputs TP cannot split raises ValueError."""
     if tensor_parallel_size == 1:
         pytest.skip("every size splits over one rank")
     llm_config = TransformerConfig(
@@ -177,7 +177,7 @@ def test_rejects_features_not_divisible_by_tp(tensor_parallel_size: int) -> None
 
 
 def test_rejects_pg_collection_of_another_tp_size(tensor_parallel_size: int) -> None:
-    """The TP group in pg_collection must have as many ranks as llm_config says."""
+    """Check that a pg_collection TP group of another size than llm_config raises ValueError."""
     llm_config = TransformerConfig(
         num_layers=1,
         hidden_size=64,
