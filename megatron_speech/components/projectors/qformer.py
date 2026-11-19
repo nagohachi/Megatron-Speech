@@ -233,7 +233,7 @@ class QFormerProjector(MegatronModule):
                     raise ValueError(f"{name} must be at least 1, got {count}")
 
         def build_query_tokens() -> torch.nn.Parameter:
-            """Build the learned queries ``[num_query_tokens, hidden_size]`` at random.
+            """Build ``[num_query_tokens, hidden_size]`` learned queries from a normal distribution.
 
             Hugging Face starts them from zeros, but equal queries get equal gradients and stay
             equal; LAVIS's BLIP-2 draws them from a normal distribution, as done here.
