@@ -47,8 +47,10 @@ ENCODER_MAPPINGS = [
     ],
 ]
 
-# Qwen3-ASR's two-layer MLP projector, with names relative to the projector and to Hugging
-# Face's multi_modal_projector.
+# Qwen3-ASR's MLP projector, with names relative to the projector and to Hugging Face's
+# multi_modal_projector. Hugging Face's Qwen3-ASR projector has exactly two linear layers
+# (linear_1, linear_2); a projector of another depth has parameters that this table leaves
+# out, and Megatron-Bridge stops with "No mapping found" naming them.
 PROJECTOR_MAPPINGS = [
     AutoMapping(f"layers.{index}.{suffix}", f"linear_{index + 1}.{suffix}")
     for index in range(2)
