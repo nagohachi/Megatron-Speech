@@ -173,11 +173,17 @@ def test_saved_weights_match_hf(saved_dir: Path, hf_dir: Path, dtype: torch.dtyp
         assert torch.equal(saved[name], source[name].to(dtype)), name
 
 
-def test_saved_checkpoint_keeps_other_files(saved_dir: Path) -> None:
-    """Check that the saved checkpoint has the config and the processor file of the source."""
+def test_saved_config_matches_hf(saved_dir: Path) -> None:
+    """Check that the saved checkpoint has the config of the source."""
     if torch.distributed.get_rank() != 0:
         return
     assert Qwen3ASRConfig.from_pretrained(saved_dir).to_dict() == HF_CONFIG.to_dict()
+
+
+def test_saved_checkpoint_keeps_processor_file(saved_dir: Path) -> None:
+    """Check that the saved checkpoint has the processor file of the source, unchanged."""
+    if torch.distributed.get_rank() != 0:
+        return
     assert (saved_dir / "preprocessor_config.json").read_text() == PREPROCESSOR_CONFIG
 
 
