@@ -56,38 +56,6 @@ PROJECTOR_MAPPINGS = [
 ]
 
 
-def rebase_mappings(
-    mappings: list[MegatronParamMapping],
-    megatron_prefix: str,
-    hf_old_prefix: str,
-    hf_new_prefix: str,
-) -> list[MegatronParamMapping]:
-    """Return copies of ``mappings`` with the names of a part inside a larger model.
-
-    - Megatron names: ``megatron_prefix`` is added in front.
-    - Hugging Face names: a leading ``hf_old_prefix`` becomes ``hf_new_prefix``; names without
-      it stay, such as ``lm_head.weight``. An empty ``hf_old_prefix`` adds ``hf_new_prefix``.
-    """
-
-    def rebase_hf_name(name: str) -> str:
-        """Replace the leading ``hf_old_prefix`` of ``name`` with ``hf_new_prefix``."""
-        if not name.startswith(hf_old_prefix):
-            return name
-        return hf_new_prefix + name.removeprefix(hf_old_prefix)
-
-    rebased = []
-    for mapping in mappings:
-        megatron_name = megatron_prefix + mapping.megatron_param
-        if isinstance(
-            mapping.hf_param, dict
-        ):  # QKVMapping (q, k, v) and GatedMLPMapping (gate, up)
-            hf_names = {key: rebase_hf_name(name) for key, name in mapping.hf_param.items()}
-            rebased.append(type(mapping)(megatron_name, **hf_names))
-        else:
-            rebased.append(type(mapping)(megatron_name, rebase_hf_name(mapping.hf_param)))
-    return rebased
-
-
 def build_qwen3_asr_mappings() -> list[MegatronParamMapping]:
     """Map the speech LLM built as Qwen3-ASR to Hugging Face's ``Qwen3ASRForConditionalGeneration``.
 
@@ -95,6 +63,37 @@ def build_qwen3_asr_mappings() -> list[MegatronParamMapping]:
     - Projector: ``PROJECTOR_MAPPINGS`` under ``model.multi_modal_projector``.
     - LLM: Megatron-Bridge's table of Qwen3, under ``model.language_model``.
     """
+
+    def rebase_mappings(
+        mappings: list[MegatronParamMapping],
+        megatron_prefix: str,
+        hf_old_prefix: str,
+        hf_new_prefix: str,
+    ) -> list[MegatronParamMapping]:
+        """Return copies of ``mappings`` with the names of a part inside a larger model.
+
+        - Megatron names: ``megatron_prefix`` is added in front.
+        - Hugging Face names: a leading ``hf_old_prefix`` becomes ``hf_new_prefix``; names without
+          it stay, such as ``lm_head.weight``. An empty ``hf_old_prefix`` adds ``hf_new_prefix``.
+        """
+
+        def rebase_hf_name(name: str) -> str:
+            """Replace the leading ``hf_old_prefix`` of ``name`` with ``hf_new_prefix``."""
+            if not name.startswith(hf_old_prefix):
+                return name
+            return hf_new_prefix + name.removeprefix(hf_old_prefix)
+
+        rebased = []
+        for mapping in mappings:
+            megatron_name = megatron_prefix + mapping.megatron_param
+            # QKVMapping (q, k, v) and GatedMLPMapping (gate, up) hold several HF names.
+            if isinstance(mapping.hf_param, dict):
+                hf_names = {key: rebase_hf_name(name) for key, name in mapping.hf_param.items()}
+                rebased.append(type(mapping)(megatron_name, **hf_names))
+            else:
+                rebased.append(type(mapping)(megatron_name, rebase_hf_name(mapping.hf_param)))
+        return rebased
+
     audio = f"modality_submodules.{AUDIO_MODALITY}."
     return [
         *rebase_mappings(
