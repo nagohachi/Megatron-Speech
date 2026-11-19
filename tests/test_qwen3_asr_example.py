@@ -10,37 +10,32 @@ HF_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
 # Qwen3-ASR-1.7B's transcript of a LibriSpeech test-clean utterance: cased, with punctuation.
 TRANSCRIPT = "Concord returned to its place amidst the tents."
 
+# Lengths of the audio at 16 kHz: 0.19 s, 0.5 s, 2 s and 2.3 s. The feature extractor pads
+# audio shorter than 0.5 s to 0.5 s; they give 50 mel frames in one partial chunk (twice),
+# 200 in two whole chunks, and 230. With or without the language forced in the prompt.
+pytestmark = [
+    pytest.mark.parametrize(
+        "num_samples",
+        [3000, 8000, 32000, 36800],
+        ids=[
+            "shorter-than-min-length",
+            "shorter-than-a-chunk",
+            "whole-chunks",
+            "partial-last-chunk",
+        ],
+    ),
+    pytest.mark.parametrize("force_language", [False, True], ids=["language-in-target", "forced"]),
+]
+# A transcript, and an empty one, whose answer is the end-of-turn token only.
+WITH_TRANSCRIPTS = pytest.mark.parametrize(
+    "transcript", [TRANSCRIPT, ""], ids=["transcript", "empty"]
+)
+
 
 @pytest.fixture(name="processor", scope="module")
 def build_processor() -> Qwen3ASRProcessor:
     """Load Qwen3-ASR's processor, downloading its files if they are not in the cache."""
     return AutoProcessor.from_pretrained(HF_MODEL)
-
-
-@pytest.fixture(name="force_language", params=[False, True], ids=["language-in-target", "forced"])
-def get_force_language(request: pytest.FixtureRequest) -> bool:
-    """Return whether the language is forced in the prompt or predicted in the target."""
-    return request.param
-
-
-@pytest.fixture(
-    name="num_samples",
-    params=[3000, 8000, 32000, 36800],
-    ids=["shorter-than-min-length", "shorter-than-a-chunk", "whole-chunks", "partial-last-chunk"],
-)
-def get_num_samples(request: pytest.FixtureRequest) -> int:
-    """Return the length of the audio at 16 kHz: 0.19 s, 0.5 s, 2 s or 2.3 s.
-
-    The feature extractor pads audio shorter than 0.5 s to 0.5 s. They give 50 mel frames in
-    one partial chunk (twice), 200 in two whole chunks, and 230.
-    """
-    return request.param
-
-
-@pytest.fixture(name="transcript", params=[TRANSCRIPT, ""], ids=["transcript", "empty"])
-def get_transcript(request: pytest.FixtureRequest) -> str:
-    """Return a transcript, or an empty one, whose answer is the end-of-turn token only."""
-    return request.param
 
 
 @pytest.fixture(name="waveform")
@@ -58,6 +53,7 @@ def build_example(
     return builder.build(waveform, transcript)
 
 
+@WITH_TRANSCRIPTS
 def test_input_ids_match_hf(
     example: SpeechExample, processor: Qwen3ASRProcessor, waveform: np.ndarray, transcript: str
 ) -> None:
@@ -71,6 +67,7 @@ def test_input_ids_match_hf(
     assert torch.equal(example.input_ids, expected.input_ids[0])
 
 
+@WITH_TRANSCRIPTS
 def test_loss_mask_covers_answer(
     example: SpeechExample, processor: Qwen3ASRProcessor, transcript: str, force_language: bool
 ) -> None:
@@ -85,12 +82,14 @@ def test_loss_mask_covers_answer(
     assert processor.tokenizer.decode(example.input_ids[-num_targets:]) == expected
 
 
+@WITH_TRANSCRIPTS
 def test_waveform_is_kept(example: SpeechExample, waveform: np.ndarray) -> None:
     """Check that the example keeps the float32 waveform, for the log-mel on the GPU."""
     assert example.waveform.dtype == torch.float32
     assert torch.equal(example.waveform, torch.from_numpy(waveform))
 
 
+@WITH_TRANSCRIPTS
 def test_audio_tokens_match_encoder_frames(
     example: SpeechExample, processor: Qwen3ASRProcessor, waveform: np.ndarray
 ) -> None:
