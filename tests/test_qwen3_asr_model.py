@@ -209,7 +209,9 @@ def export_gradients(
 ) -> dict[str, torch.Tensor]:
     """Return the gradients of ``model`` by Hugging Face weight name, on rank 0's CPU.
 
-    The gradients are those that Megatron's ``DistributedDataParallel`` keeps in ``main_grad``.
+    The gradients are those that Megatron's ``DistributedDataParallel`` keeps in ``main_grad``,
+    the only place that holds them: its hooks move each ``grad`` there and clear ``grad``, and
+    ``finalize_model_grads`` and Megatron's optimizer read them there.
     The export to Hugging Face only rearranges tensors (fused QKV, tensor parallel shards),
     so exporting the gradients in place of the weights gives them Hugging Face's layout.
     """
