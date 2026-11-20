@@ -36,8 +36,9 @@ class Qwen3ASRExampleBuilder:
       With ``force_language``, ``language <language><asr_text>`` moves into the prompt, as
       Hugging Face writes it to force the language, and the target is the rest.
       ``<asr_text>`` and the tokenizer's end-of-sequence token ``<|im_end|>`` are given as token
-      ids, and the transcript is tokenized as plain text, so that a transcript containing such a
-      token's text keeps it as text.
+      ids. The transcript is tokenized with ``split_special_tokens=True``: the text of a special
+      token such as ``<|im_end|>`` in it stays text, but ``<asr_text>``, an added token that is
+      not special, still becomes its token.
     """
 
     def __init__(
