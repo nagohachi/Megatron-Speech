@@ -6,11 +6,7 @@ from transformers import AutoProcessor, Qwen3ASRProcessor
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
 from megatron_speech.data.qwen3_asr import Qwen3ASRExampleBuilder, SpeechExample
-from tests.hf_audio_inputs import WAVEFORM_LENGTHS
-
-HF_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
-# Qwen3-ASR-1.7B's transcript of a LibriSpeech test-clean utterance: cased, with punctuation.
-TRANSCRIPT = "Concord returned to its place amidst the tents."
+from tests.hf_audio_inputs import HF_MODEL, TRANSCRIPT, WAVEFORM_LENGTHS
 
 # Each length of the audio, with or without the language forced in the prompt.
 pytestmark = [

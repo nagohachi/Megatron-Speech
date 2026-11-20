@@ -2,6 +2,10 @@ import torch
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
 
+# The released Qwen3-ASR that tests compare with.
+HF_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
+# Qwen3-ASR-1.7B's transcript of a LibriSpeech test-clean utterance: cased, with punctuation.
+TRANSCRIPT = "Concord returned to its place amidst the tents."
 # Lengths in samples, at 16 kHz, of the waveforms that tests compare with Hugging Face's
 # Qwen3-ASR feature extractor and processor. Hugging Face pads audio shorter than 8000 samples
 # (0.5 s) to 8000. They give 50 mel frames in one partial encoder chunk (the first two), 200 in
