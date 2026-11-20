@@ -5,13 +5,14 @@ import torch
 from transformers import Qwen3ASRProcessor
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
+from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
 
 
 @dataclass
 class SpeechExample:
     """One utterance as the input of the speech LLM.
 
-    - ``waveform``: ``[num_samples]`` float32 audio at the feature extractor's sampling rate.
+    - ``waveform``: ``[num_samples]`` float32 audio at the log-mel's sampling rate.
       The log-mel is computed from it on the GPU, for a whole micro-batch at once.
     - ``input_ids``: ``[num_tokens]`` token ids, with one audio token per encoder frame.
     - ``loss_mask``: ``[num_tokens]`` float32, 1 on the tokens that the model learns to predict
@@ -28,26 +29,29 @@ class Qwen3ASRExampleBuilder:
 
     - Prompt: Hugging Face's ``apply_transcription_request``, tokenized once; each example puts
       one audio token per encoder frame between its two halves.
-    - Number of audio tokens: from the number of samples, as Hugging Face's feature extractor
-      counts the mel frames, and from ``encoder_config`` for the encoder frames. The data
-      loader computes no log-mel.
+    - Number of audio tokens: the mel frames from ``log_mel_config``, as Hugging Face's feature
+      extractor counts them, then the encoder frames from ``encoder_config``. The data loader
+      computes no log-mel.
     - Target: the assistant's answer, ``language <language><asr_text><transcript><|im_end|>``.
       With ``force_language``, ``language <language><asr_text>`` moves into the prompt, as
       Hugging Face writes it to force the language, and the target is the rest.
-      ``<asr_text>`` and ``<|im_end|>`` are given as token ids, and the transcript is tokenized
-      as plain text, so that a transcript containing such a token's text keeps it as text.
+      ``<asr_text>`` and the tokenizer's end-of-sequence token ``<|im_end|>`` are given as token
+      ids. The transcript is tokenized with ``split_special_tokens=True``: the text of a special
+      token such as ``<|im_end|>`` in it stays text, but ``<asr_text>``, an added token that is
+      not special, still becomes its token.
     """
 
     def __init__(
         self,
         processor: Qwen3ASRProcessor,
+        log_mel_config: Qwen3ASRLogMelConfig,
         encoder_config: Qwen3ASREncoderConfig,
         language: str,
         force_language: bool,
     ) -> None:
         """Tokenize the prompt around the audio; ``language`` is a full name such as ``English``."""
         self.tokenizer = processor.tokenizer
-        self.feature_extractor = processor.feature_extractor
+        self.log_mel_config = log_mel_config
         self.encoder_config = encoder_config
         self.audio_token_id = processor.audio_token_id
         # The prompt holds one audio token, which each example replaces with its own count.
@@ -70,13 +74,11 @@ class Qwen3ASRExampleBuilder:
                 *self.tokenizer(f"language {language}", add_special_tokens=False).input_ids,
                 self.tokenizer.convert_tokens_to_ids("<asr_text>"),
             ]
-        self.end_of_turn_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+        self.end_of_turn_id = self.tokenizer.eos_token_id
 
     def build(self, waveform: np.ndarray, transcript: str) -> SpeechExample:
-        """Build the example of ``waveform``, sampled at the feature extractor's rate."""
-        # Hugging Face pads audio shorter than min_length and drops the last STFT frame.
-        num_samples = max(len(waveform), self.feature_extractor.min_length)
-        num_mel_frames = num_samples // self.feature_extractor.hop_length
+        """Build the example of ``waveform``, sampled at ``log_mel_config.sampling_rate``."""
+        num_mel_frames = self.log_mel_config.calc_num_frames(len(waveform))
         num_audio_tokens = self.encoder_config.calc_num_encoder_frames(num_mel_frames)
         prompt_ids = [
             *self.prompt_ids_before_audio,

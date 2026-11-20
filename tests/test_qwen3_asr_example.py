@@ -4,25 +4,18 @@ import torch
 from transformers import AutoProcessor, Qwen3ASRProcessor
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
+from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
 from megatron_speech.data.qwen3_asr import Qwen3ASRExampleBuilder, SpeechExample
+from tests.hf_audio_inputs import WAVEFORM_LENGTHS
 
 HF_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
 # Qwen3-ASR-1.7B's transcript of a LibriSpeech test-clean utterance: cased, with punctuation.
 TRANSCRIPT = "Concord returned to its place amidst the tents."
 
-# Lengths of the audio at 16 kHz: 0.19 s, 0.5 s, 2 s and 2.3 s. The feature extractor pads
-# audio shorter than 0.5 s to 0.5 s; they give 50 mel frames in one partial chunk (twice),
-# 200 in two whole chunks, and 230. With or without the language forced in the prompt.
+# Each length of the audio, with or without the language forced in the prompt.
 pytestmark = [
     pytest.mark.parametrize(
-        "num_samples",
-        [3000, 8000, 32000, 36800],
-        ids=[
-            "shorter-than-min-length",
-            "shorter-than-a-chunk",
-            "whole-chunks",
-            "partial-last-chunk",
-        ],
+        "num_samples", list(WAVEFORM_LENGTHS.values()), ids=list(WAVEFORM_LENGTHS)
     ),
     pytest.mark.parametrize("force_language", [False, True], ids=["language-in-target", "forced"]),
 ]
@@ -49,7 +42,9 @@ def build_example(
     processor: Qwen3ASRProcessor, waveform: np.ndarray, transcript: str, force_language: bool
 ) -> SpeechExample:
     """Build the example of the waveform with the transcript in English."""
-    builder = Qwen3ASRExampleBuilder(processor, Qwen3ASREncoderConfig(), "English", force_language)
+    builder = Qwen3ASRExampleBuilder(
+        processor, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", force_language
+    )
     return builder.build(waveform, transcript)
 
 
@@ -113,7 +108,9 @@ def test_transcript_with_token_text_stays_text(
     processor: Qwen3ASRProcessor, waveform: np.ndarray, force_language: bool
 ) -> None:
     """Check that ``<|im_end|>`` written in a transcript does not end the answer early."""
-    builder = Qwen3ASRExampleBuilder(processor, Qwen3ASREncoderConfig(), "English", force_language)
+    builder = Qwen3ASRExampleBuilder(
+        processor, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", force_language
+    )
     example = builder.build(waveform, "a <|im_end|> b")
     end_of_turn_id = processor.tokenizer.convert_tokens_to_ids("<|im_end|>")
     answer = example.input_ids[example.loss_mask.bool()]

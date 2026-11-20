@@ -2,6 +2,18 @@ import torch
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
 
+# Lengths in samples, at 16 kHz, of the waveforms that tests compare with Hugging Face's
+# Qwen3-ASR feature extractor and processor. Hugging Face pads audio shorter than 8000 samples
+# (0.5 s) to 8000. They give 50 mel frames in one partial encoder chunk (the first two), 200 in
+# two whole chunks, 230 with a partial last chunk, and 350 from audio that ends within a hop.
+WAVEFORM_LENGTHS = {
+    "shorter-than-min-length": 3000,
+    "shorter-than-a-chunk": 8000,
+    "whole-chunks": 32000,
+    "partial-last-chunk": 36800,
+    "ending-within-a-hop": 56080,
+}
+
 
 def build_hf_audio_inputs(
     mels: list[torch.Tensor], encoder_config: Qwen3ASREncoderConfig
