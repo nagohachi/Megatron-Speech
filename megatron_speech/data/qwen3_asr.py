@@ -35,8 +35,9 @@ class Qwen3ASRExampleBuilder:
     - Target: the assistant's answer, ``language <language><asr_text><transcript><|im_end|>``.
       With ``force_language``, ``language <language><asr_text>`` moves into the prompt, as
       Hugging Face writes it to force the language, and the target is the rest.
-      ``<asr_text>`` and ``<|im_end|>`` are given as token ids, and the transcript is tokenized
-      as plain text, so that a transcript containing such a token's text keeps it as text.
+      ``<asr_text>`` and the tokenizer's end-of-sequence token ``<|im_end|>`` are given as token
+      ids, and the transcript is tokenized as plain text, so that a transcript containing such a
+      token's text keeps it as text.
     """
 
     def __init__(
@@ -72,7 +73,7 @@ class Qwen3ASRExampleBuilder:
                 *self.tokenizer(f"language {language}", add_special_tokens=False).input_ids,
                 self.tokenizer.convert_tokens_to_ids("<asr_text>"),
             ]
-        self.end_of_turn_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+        self.end_of_turn_id = self.tokenizer.eos_token_id
 
     def build(self, waveform: np.ndarray, transcript: str) -> SpeechExample:
         """Build the example of ``waveform``, sampled at ``log_mel_config.sampling_rate``."""
