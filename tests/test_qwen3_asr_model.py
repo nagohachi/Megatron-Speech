@@ -204,33 +204,6 @@ def build_model(
     return model
 
 
-def export_gradients(
-    model: MimoModel, hf_pretrained: PreTrainedCausalLM
-) -> dict[str, torch.Tensor]:
-    """Return the gradients of ``model`` by Hugging Face weight name, on rank 0's CPU.
-
-    The gradients are those that Megatron's ``DistributedDataParallel`` keeps in ``main_grad``,
-    the only place that holds them: its hooks move each ``grad`` there and clear ``grad``, and
-    ``finalize_model_grads`` and Megatron's optimizer read them there.
-    The export to Hugging Face only rearranges tensors (fused QKV, tensor parallel shards),
-    so exporting the gradients in place of the weights gives them Hugging Face's layout.
-    """
-    params = list(model.parameters())
-    weights = [param.data for param in params]
-    for param in params:
-        param.data = param.main_grad
-    try:
-        return {
-            name: gradient.cpu()
-            for name, gradient in BRIDGE.stream_weights_megatron_to_hf(
-                [model], hf_pretrained, show_progress=False
-            )
-        }
-    finally:
-        for param, weight in zip(params, weights, strict=True):
-            param.data = weight
-
-
 @pytest.fixture(name="model_outputs", scope="module")
 def calc_model_outputs(
     model: MimoModel,
@@ -239,6 +212,30 @@ def calc_model_outputs(
     examples: dict[str, SpeechExample],
 ) -> ModelOutputs:
     """Run the model under test as training does: one packed row, log-mel on the GPU."""
+
+    def export_gradients() -> dict[str, torch.Tensor]:
+        """Return the gradients of ``model`` by Hugging Face weight name, on rank 0's CPU.
+
+        The gradients are those that Megatron's ``DistributedDataParallel`` keeps in ``main_grad``,
+        the only place that holds them: its hooks move each ``grad`` there and clear ``grad``, and
+        ``finalize_model_grads`` and Megatron's optimizer read them there.
+        The export to Hugging Face only rearranges tensors (fused QKV, tensor parallel shards),
+        so exporting the gradients in place of the weights gives them Hugging Face's layout.
+        """
+        params = list(model.parameters())
+        weights = [param.data for param in params]
+        for param in params:
+            param.data = param.main_grad
+        try:
+            return {
+                name: gradient.cpu()
+                for name, gradient in BRIDGE.stream_weights_megatron_to_hf(
+                    [model], hf_pretrained, show_progress=False
+                )
+            }
+        finally:
+            for param, weight in zip(params, weights, strict=True):
+                param.data = weight
 
     def build_modality_inputs() -> dict[str, dict[str, dict[str, torch.Tensor | int]]]:
         """Compute the log-mel of all utterances on the GPU and cut it for the encoder."""
@@ -286,7 +283,7 @@ def calc_model_outputs(
             name: utterance_logits.detach().float()
             for name, utterance_logits in logits_by_utterance.items()
         },
-        gradients=export_gradients(model, hf_pretrained),
+        gradients=export_gradients(),
     )
 
 
