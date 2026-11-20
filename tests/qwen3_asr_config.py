@@ -13,40 +13,35 @@ def build_speech_llm_config(
 ) -> SpeechLLMConfig:
     """Build the speech LLM config of the shape of ``hf_config``, with ``dtype`` parameters."""
     audio, text = hf_config.audio_config, hf_config.text_config
-
-    def build_llm_config() -> GPTModelConfig:
-        """Build the config of the LLM of the shape of ``text``."""
-        transformer = TransformerConfig(
-            num_layers=text.num_hidden_layers,
-            hidden_size=text.hidden_size,
-            num_attention_heads=text.num_attention_heads,
-            num_query_groups=text.num_key_value_heads,
-            kv_channels=text.head_dim,
-            ffn_hidden_size=text.intermediate_size,
-            normalization="RMSNorm",
-            layernorm_epsilon=text.rms_norm_eps,
-            qk_layernorm=True,
-            gated_linear_unit=True,
-            activation_func=torch.nn.functional.silu,
-            add_bias_linear=False,
-            bias_activation_fusion=False,
-            hidden_dropout=0.0,
-            attention_dropout=0.0,
-            tensor_model_parallel_size=tensor_parallel_size,
-            bf16=dtype == torch.bfloat16,
-            params_dtype=dtype,
-        )
-        return GPTModelConfig(
+    transformer = TransformerConfig(
+        num_layers=text.num_hidden_layers,
+        hidden_size=text.hidden_size,
+        num_attention_heads=text.num_attention_heads,
+        num_query_groups=text.num_key_value_heads,
+        kv_channels=text.head_dim,
+        ffn_hidden_size=text.intermediate_size,
+        normalization="RMSNorm",
+        layernorm_epsilon=text.rms_norm_eps,
+        qk_layernorm=True,
+        gated_linear_unit=True,
+        activation_func=torch.nn.functional.silu,
+        add_bias_linear=False,
+        bias_activation_fusion=False,
+        hidden_dropout=0.0,
+        attention_dropout=0.0,
+        tensor_model_parallel_size=tensor_parallel_size,
+        bf16=dtype == torch.bfloat16,
+        params_dtype=dtype,
+    )
+    return SpeechLLMConfig(
+        llm=GPTModelConfig(
             transformer=transformer,
             vocab_size=text.vocab_size,
             seq_length=text.max_position_embeddings,
             share_embeddings_and_output_weights=hf_config.tie_word_embeddings,
             position_embedding_type="rope",
             rotary_base=text.rope_parameters["rope_theta"],
-        )
-
-    return SpeechLLMConfig(
-        llm=build_llm_config(),
+        ),
         encoder=Qwen3ASREncoderConfig(
             num_mel_bins=audio.num_mel_bins,
             d_model=audio.d_model,
