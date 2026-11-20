@@ -129,7 +129,9 @@ def build_hf_pretrained() -> PreTrainedCausalLM:
     """Load Hugging Face's Qwen3-ASR in fp32 on the GPU, for the reference and Megatron-Bridge.
 
     Megatron-Bridge reads the weights of the loaded model instead of reading the checkpoint
-    files again, which takes minutes from a network file system.
+    files again, which takes minutes from a network file system. ``PreTrainedCausalLM`` reads no
+    weights itself: it loads its model on first use, through ``AutoModelForCausalLM``, which has
+    no Qwen3-ASR class, and the model set here comes first.
     """
     hf_pretrained = PreTrainedCausalLM.from_pretrained(HF_MODEL, device="cuda")
     hf_pretrained.model = Qwen3ASRForConditionalGeneration.from_pretrained(
