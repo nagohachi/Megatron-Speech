@@ -94,9 +94,6 @@ class Qwen3ASRLogMel(torch.nn.Module):
             torch.nn.utils.rnn.pad_sequence(stft_inputs, batch_first=True),
             n_fft,
             hop_length,
-            # Made on the module's device, as Hugging Face makes it on the STFT's device. The
-            # CPU's window differs from the GPU's by up to 6e-8, which changed the log-mel of
-            # bins with little power by up to 9.3e-6.
             window=torch.hann_window(n_fft, device=self.mel_filters.device),
             center=False,
             return_complex=True,
