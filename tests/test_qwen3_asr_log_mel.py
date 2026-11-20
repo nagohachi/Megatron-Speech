@@ -5,22 +5,20 @@ import torch
 from transformers import Qwen3ASRFeatureExtractor
 
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMel, Qwen3ASRLogMelConfig
+from tests.hf_audio_inputs import WAVEFORM_LENGTHS
 from tests.numerical_error import TOLERANCES, calc_relative_error
 
 pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)
 
 CONFIG = Qwen3ASRLogMelConfig()
-# Lengths in samples at 16 kHz: 0.19 s (padded to min_length), 0.5 s, 2 s, 2.3 s, and 3.505 s,
-# which ends within a hop.
-WAVEFORM_LENGTHS = [3000, 8000, 32000, 36800, 56080]
 
 
 @pytest.fixture(name="waveforms")
 def build_waveforms() -> list[torch.Tensor]:
     """Build float32 noise of each length in ``WAVEFORM_LENGTHS``."""
     generator = torch.Generator().manual_seed(0)
-    return [torch.randn(length, generator=generator) * 0.1 for length in WAVEFORM_LENGTHS]
+    return [torch.randn(length, generator=generator) * 0.1 for length in WAVEFORM_LENGTHS.values()]
 
 
 @pytest.fixture(name="feature_extractor")
