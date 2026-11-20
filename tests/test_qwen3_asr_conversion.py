@@ -8,23 +8,12 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.core.models.mimo import MimoModel
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import gather_from_tensor_model_parallel_region
-from megatron.core.transformer import TransformerConfig
-from megatron.training.models.gpt import GPTModelConfig
 from transformers import Qwen3ASRConfig, Qwen3ASRForConditionalGeneration
 
-from megatron_speech.components.encoders.qwen3_asr import (
-    Qwen3ASREncoderConfig,
-    Qwen3ASREncoderInputs,
-)
-from megatron_speech.components.projectors.mlp import MLPProjectorConfig
+from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderInputs
 from megatron_speech.conversion.bridge import MappingBridge
 from megatron_speech.conversion.qwen3_asr import build_qwen3_asr_mappings
-from megatron_speech.models.speech_llm import (
-    AUDIO_MODALITY,
-    ENCODER_NAME,
-    SpeechLLMConfig,
-    build_speech_llm,
-)
+from megatron_speech.models.speech_llm import AUDIO_MODALITY, ENCODER_NAME, build_speech_llm
 from tests.hf_audio_inputs import build_hf_audio_inputs
 from tests.hf_reference import (
     check_export_restores_hf_weights,
@@ -33,6 +22,7 @@ from tests.hf_reference import (
     take_rank0_path,
 )
 from tests.numerical_error import TOLERANCES, calc_relative_error
+from tests.qwen3_asr_config import build_speech_llm_config
 
 pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)
@@ -68,59 +58,6 @@ MEL_LENGTHS = [250, 37]
 BRIDGE = MappingBridge(build_qwen3_asr_mappings())
 
 
-def build_speech_llm_config(dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLLMConfig:
-    """Build the speech LLM config of the shape of ``HF_CONFIG``, with ``dtype`` parameters."""
-    audio, text = HF_CONFIG.audio_config, HF_CONFIG.text_config
-    transformer = TransformerConfig(
-        num_layers=text.num_hidden_layers,
-        hidden_size=text.hidden_size,
-        num_attention_heads=text.num_attention_heads,
-        num_query_groups=text.num_key_value_heads,
-        kv_channels=text.head_dim,
-        ffn_hidden_size=text.intermediate_size,
-        normalization="RMSNorm",
-        layernorm_epsilon=text.rms_norm_eps,
-        qk_layernorm=True,
-        gated_linear_unit=True,
-        activation_func=torch.nn.functional.silu,
-        add_bias_linear=False,
-        bias_activation_fusion=False,
-        hidden_dropout=0.0,
-        attention_dropout=0.0,
-        tensor_model_parallel_size=tensor_parallel_size,
-        bf16=dtype == torch.bfloat16,
-        params_dtype=dtype,
-    )
-    return SpeechLLMConfig(
-        llm=GPTModelConfig(
-            transformer=transformer,
-            vocab_size=text.vocab_size,
-            seq_length=text.max_position_embeddings,
-            share_embeddings_and_output_weights=HF_CONFIG.tie_word_embeddings,
-            position_embedding_type="rope",
-            rotary_base=text.rope_parameters["rope_theta"],
-        ),
-        encoder=Qwen3ASREncoderConfig(
-            num_mel_bins=audio.num_mel_bins,
-            d_model=audio.d_model,
-            encoder_layers=audio.encoder_layers,
-            encoder_attention_heads=audio.encoder_attention_heads,
-            encoder_ffn_dim=audio.encoder_ffn_dim,
-            downsample_hidden_size=audio.downsample_hidden_size,
-            n_window=audio.n_window,
-            n_window_infer=audio.n_window_infer,
-            activation_function=audio.activation_function,
-        ),
-        projector=MLPProjectorConfig(
-            input_size=audio.d_model,
-            output_size=audio.output_dim,
-            hidden_size=audio.d_model,
-            activation=audio.activation_function,
-        ),
-        audio_token_id=HF_CONFIG.audio_token_id,
-    )
-
-
 @pytest.fixture(name="hf_dir")
 def build_hf_checkpoint(tmp_path: Path, tensor_parallel_size: int) -> Path:
     """Save a Qwen3-ASR with random weights as a Hugging Face checkpoint, the same on every rank.
@@ -142,7 +79,7 @@ def build_reference(hf_dir: Path) -> Qwen3ASRForConditionalGeneration:
 @pytest.fixture(name="model")
 def build_model(hf_dir: Path, dtype: torch.dtype, tensor_parallel_size: int) -> MimoModel:
     """Build the speech LLM in ``dtype`` and load the Hugging Face weights into it."""
-    config = build_speech_llm_config(dtype, tensor_parallel_size)
+    config = build_speech_llm_config(HF_CONFIG, dtype, tensor_parallel_size)
     model = build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups()).cuda()
     BRIDGE.load_weights_hf_to_megatron(PreTrainedCausalLM.from_pretrained(hf_dir), [model])
     return model
@@ -220,7 +157,7 @@ def test_audio_features_match_hf(
     tensor_parallel_size: int,
 ) -> None:
     """Check that the encoder and the projector give Hugging Face's audio features."""
-    encoder_config = build_speech_llm_config(dtype, tensor_parallel_size).encoder
+    encoder_config = build_speech_llm_config(HF_CONFIG, dtype, tensor_parallel_size).encoder
     torch.manual_seed(1)
     mels = [torch.randn(encoder_config.num_mel_bins, length) for length in MEL_LENGTHS]
     encoder_inputs = Qwen3ASREncoderInputs.build(mels, encoder_config).to("cuda")
