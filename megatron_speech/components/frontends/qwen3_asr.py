@@ -99,6 +99,8 @@ class Qwen3ASRLogMel(torch.nn.Module):
             return_complex=True,
         )
         log_spec = (self.mel_filters.T @ stft.abs().square()).clamp(min=1e-10).log10()
+        # The maximum of each utterance is taken over its own frames, without the frames of the
+        # padding to the longest utterance.
         frame_indices = torch.arange(log_spec.shape[-1], device=log_spec.device)
         valid_frame_mask = (
             frame_indices < torch.tensor(valid_frame_counts, device=log_spec.device)[:, None]
@@ -106,6 +108,9 @@ class Qwen3ASRLogMel(torch.nn.Module):
         max_log_spec = log_spec.masked_fill(~valid_frame_mask[:, None], float("-inf")).amax(
             dim=(1, 2), keepdim=True
         )
+        # Whisper's normalization, which Hugging Face's feature extractor keeps: values more
+        # than 8 (80 dB) below the utterance's maximum are raised to that floor, and then all
+        # values are scaled by (x + 4) / 4.
         log_spec = (torch.maximum(log_spec, max_log_spec - 8.0) + 4.0) / 4.0
         return [
             utterance_log_spec[:, :num_utterance_frames]
