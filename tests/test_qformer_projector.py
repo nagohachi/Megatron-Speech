@@ -61,10 +61,10 @@ def describe_config(config: QFormerProjectorConfig) -> str:
     return f"{config.num_hidden_layers}layers-{config.num_query_tokens}queries-{window}"
 
 
-@pytest.fixture(name="projector_config", params=PROJECTOR_CONFIGS, ids=describe_config)
-def get_projector_config(request: pytest.FixtureRequest) -> QFormerProjectorConfig:
-    """Return a config that cuts each utterance into windows, or one that reads it whole."""
-    return request.param
+# A config that cuts each utterance into windows, and one that reads it whole.
+WITH_PROJECTOR_CONFIGS = pytest.mark.parametrize(
+    "projector_config", PROJECTOR_CONFIGS, ids=describe_config
+)
 
 
 @pytest.fixture(name="reference")
@@ -238,6 +238,7 @@ def calc_projector_output(
 
 
 @WITH_DTYPES
+@WITH_PROJECTOR_CONFIGS
 def test_output_shape_matches_hf(
     projector_output: torch.Tensor, reference_output: torch.Tensor
 ) -> None:
@@ -246,6 +247,7 @@ def test_output_shape_matches_hf(
 
 
 @WITH_DTYPES
+@WITH_PROJECTOR_CONFIGS
 def test_output_matches_hf(
     projector_output: torch.Tensor,
     reference_output: torch.Tensor,
@@ -261,6 +263,7 @@ def test_output_matches_hf(
 
 
 @WITH_DTYPES
+@WITH_PROJECTOR_CONFIGS
 def test_gradients_match_hf(
     projector: QFormerProjector,
     reference: Reference,

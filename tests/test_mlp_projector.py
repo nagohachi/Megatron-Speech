@@ -21,16 +21,12 @@ PROJECTOR_CONFIGS = [
     replace(BASE_CONFIG, num_layers=2, activation="gelu"),
     replace(BASE_CONFIG, num_layers=3, activation="silu"),
 ]
-
-
-@pytest.fixture(
-    name="projector_config",
-    params=PROJECTOR_CONFIGS,
+# Projectors of one to three layers.
+WITH_PROJECTOR_CONFIGS = pytest.mark.parametrize(
+    "projector_config",
+    PROJECTOR_CONFIGS,
     ids=lambda config: f"{config.num_layers}layers-{config.activation}",
 )
-def get_projector_config(request: pytest.FixtureRequest) -> MLPProjectorConfig:
-    """Return a projector config with one to three layers."""
-    return request.param
 
 
 @pytest.fixture(name="reference")
@@ -115,6 +111,7 @@ def calc_projector_output(
 
 
 @WITH_DTYPES
+@WITH_PROJECTOR_CONFIGS
 def test_output_shape_matches_torch(
     projector_output: torch.Tensor, reference_output: torch.Tensor
 ) -> None:
@@ -123,12 +120,14 @@ def test_output_shape_matches_torch(
 
 
 @WITH_DTYPES
+@WITH_PROJECTOR_CONFIGS
 def test_output_has_parameter_dtype(projector_output: torch.Tensor, dtype: torch.dtype) -> None:
     """Check that the projector output has the dtype of the projector's parameters."""
     assert projector_output.dtype == dtype
 
 
 @WITH_DTYPES
+@WITH_PROJECTOR_CONFIGS
 def test_output_matches_torch(
     projector_output: torch.Tensor,
     reference_output: torch.Tensor,
@@ -144,6 +143,7 @@ def test_output_matches_torch(
 
 
 @WITH_DTYPES
+@WITH_PROJECTOR_CONFIGS
 def test_gradients_match_torch(
     projector: MLPProjector,
     reference: list[torch.nn.Linear],
