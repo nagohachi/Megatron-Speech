@@ -23,7 +23,7 @@ from megatron_speech.components.encoders.qwen3_asr import (
 )
 from tests.hf_audio_inputs import build_hf_audio_inputs
 from tests.hf_reference import randomize_norms
-from tests.numerical_error import TOLERANCES, calc_relative_error
+from tests.numerical_error import TOLERANCES, WITH_DTYPES, calc_relative_error
 from tests.tensor_parallel_shard import take_shard
 
 logger = logging.getLogger(__name__)
@@ -258,12 +258,14 @@ def calc_encoder_output(encoder: Qwen3ASREncoder, inputs: Qwen3ASREncoderInputs)
 
 
 @pytest.mark.gpu
+@WITH_DTYPES
 def test_output_shape_matches_hf(encoder_output: torch.Tensor, hf_output: torch.Tensor) -> None:
     """Check that the encoder output has the shape of Hugging Face's."""
     assert encoder_output.shape == hf_output.shape
 
 
 @pytest.mark.gpu
+@WITH_DTYPES
 def test_output_matches_hf(
     encoder_output: torch.Tensor, hf_output: torch.Tensor, dtype: torch.dtype
 ) -> None:
@@ -274,6 +276,7 @@ def test_output_matches_hf(
 
 
 @pytest.mark.gpu
+@WITH_DTYPES
 def test_gradients_match_hf(
     encoder: Qwen3ASREncoder,
     reference: HFEncoder,

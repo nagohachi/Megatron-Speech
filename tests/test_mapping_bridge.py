@@ -17,9 +17,9 @@ from tests.hf_reference import (
     randomize_norms,
     save_hf_checkpoint,
 )
-from tests.numerical_error import TOLERANCES, calc_relative_error
+from tests.numerical_error import TOLERANCES, WITH_DTYPES, calc_relative_error
 
-pytestmark = pytest.mark.gpu
+pytestmark = [pytest.mark.gpu, WITH_DTYPES]
 logger = logging.getLogger(__name__)
 
 HF_CONFIG = Qwen3Config(

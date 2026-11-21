@@ -21,10 +21,10 @@ from tests.hf_reference import (
     save_hf_checkpoint,
     take_rank0_path,
 )
-from tests.numerical_error import TOLERANCES, calc_relative_error
+from tests.numerical_error import TOLERANCES, WITH_DTYPES, calc_relative_error
 from tests.qwen3_asr_config import build_speech_llm_config
 
-pytestmark = pytest.mark.gpu
+pytestmark = [pytest.mark.gpu, WITH_DTYPES]
 logger = logging.getLogger(__name__)
 
 HF_CONFIG = Qwen3ASRConfig(

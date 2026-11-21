@@ -23,9 +23,9 @@ from megatron_speech.models.speech_llm import (
     SpeechLLMConfig,
     build_speech_llm,
 )
-from tests.numerical_error import TOLERANCES, calc_relative_error
+from tests.numerical_error import TOLERANCES, WITH_DTYPES, calc_relative_error
 
-pytestmark = pytest.mark.gpu
+pytestmark = [pytest.mark.gpu, WITH_DTYPES]
 logger = logging.getLogger(__name__)
 
 VOCAB_SIZE = 128

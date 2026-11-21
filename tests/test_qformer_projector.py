@@ -9,7 +9,7 @@ from transformers import Blip2QFormerConfig, Blip2QFormerModel
 
 from megatron_speech.components.projectors.qformer import QFormerProjector, QFormerProjectorConfig
 from tests.hf_reference import randomize_norms
-from tests.numerical_error import TOLERANCES, calc_relative_error
+from tests.numerical_error import TOLERANCES, WITH_DTYPES, calc_relative_error
 from tests.tensor_parallel_shard import take_shard
 
 pytestmark = pytest.mark.gpu
@@ -237,6 +237,7 @@ def calc_projector_output(
         return projector(frames.to(dtype), cu_seqlens)
 
 
+@WITH_DTYPES
 def test_output_shape_matches_hf(
     projector_output: torch.Tensor, reference_output: torch.Tensor
 ) -> None:
@@ -244,6 +245,7 @@ def test_output_shape_matches_hf(
     assert projector_output.shape == reference_output.shape
 
 
+@WITH_DTYPES
 def test_output_matches_hf(
     projector_output: torch.Tensor,
     reference_output: torch.Tensor,
@@ -258,6 +260,7 @@ def test_output_matches_hf(
     assert error < QFORMER_TOLERANCES[dtype]
 
 
+@WITH_DTYPES
 def test_gradients_match_hf(
     projector: QFormerProjector,
     reference: Reference,

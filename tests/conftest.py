@@ -36,9 +36,3 @@ def init_model_parallel() -> Iterator[int]:
     yield world_size
     parallel_state.destroy_model_parallel()
     torch.distributed.destroy_process_group()
-
-
-@pytest.fixture(name="dtype", params=[torch.float32, torch.bfloat16], ids=str)
-def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Return the parameter dtype of the module under test: fp32, then bf16."""
-    return request.param
