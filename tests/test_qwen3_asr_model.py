@@ -44,28 +44,17 @@ pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)
 
 BRIDGE = MappingBridge(build_qwen3_asr_mappings())
-# The lengths of ``WAVEFORM_LENGTHS`` and 10 s of audio (1000 mel frames), whose 130 encoder
-# frames the released encoder attends in two windows (104 and 26).
+# 10 s of audio has 130 encoder frames, which the encoder attends in two windows.
 UTTERANCE_LENGTHS = {**WAVEFORM_LENGTHS, "longer-than-a-window": 160000}
-# Pass limits of the errors of ``calc_errors``, by the dtype of the model under test.
-# - fp32: the largest relative error against Hugging Face's fp32 model. The 24 encoder and 28
-#   LLM layers of the released model gather more rounding than the few layers that the shared
-#   1e-5 is for; measured at TP=2: logits 6.4e-5, gradients 1.1e-3 (in the encoder).
-# - bf16: how many times Hugging Face's own bf16 model the bf16 model is as far from the fp32
-#   one. bf16 alone moves Hugging Face's logits by up to 0.43 in the largest relative error;
-#   measured: logits 2.4 times (TP=1), gradients 2.9 times (TP=2, in the encoder).
+# Limits of ``calc_errors``. Largest measured: fp32 logits 6.4e-5, gradients 1.1e-3; bf16
+# logits 2.4, gradients 2.9.
 LOGITS_LIMITS = {torch.float32: 1e-4, torch.bfloat16: 3.0}
 GRADIENT_LIMITS = {torch.float32: 2e-3, torch.bfloat16: 3.0}
 
 
 @dataclass
 class ModelOutputs:
-    """Outputs of one forward and backward pass over the utterances of the test.
-
-    - ``logits``: ``[num_tokens, vocab_size]`` float32 logits, by utterance name.
-    - ``gradients``: gradients of the summed target cross entropy, by Hugging Face weight name;
-      empty on the ranks other than 0 of a tensor parallel run.
-    """
+    """Logits by utterance name and gradients by Hugging Face weight name (on rank 0 only)."""
 
     logits: dict[str, torch.Tensor]
     gradients: dict[str, torch.Tensor]
@@ -73,7 +62,7 @@ class ModelOutputs:
 
 @dataclass
 class ReferenceOutputs:
-    """Outputs of Hugging Face's Qwen3-ASR: in fp32, the reference, and in bf16."""
+    """Outputs of Hugging Face's Qwen3-ASR in fp32 and in bf16."""
 
     fp32: ModelOutputs
     bf16: ModelOutputs
@@ -126,12 +115,9 @@ def calc_target_cross_entropy(
 
 @pytest.fixture(name="hf_pretrained", scope="module")
 def build_hf_pretrained() -> PreTrainedCausalLM:
-    """Load Hugging Face's Qwen3-ASR in fp32 on the GPU, for the reference and Megatron-Bridge.
+    """Load Hugging Face's Qwen3-ASR once, in fp32 on the GPU, for the reference and the bridge.
 
-    Megatron-Bridge reads the weights of the loaded model instead of reading the checkpoint
-    files again, which takes minutes from a network file system. ``PreTrainedCausalLM`` reads no
-    weights itself: it loads its model on first use, through ``AutoModelForCausalLM``, which has
-    no Qwen3-ASR class, and the model set here comes first.
+    ``PreTrainedCausalLM`` loads no weights until its model is used, so it uses the one set here.
     """
     hf_pretrained = PreTrainedCausalLM.from_pretrained(HF_MODEL, device="cuda")
     hf_pretrained.model = Qwen3ASRForConditionalGeneration.from_pretrained(
@@ -147,11 +133,7 @@ def run_reference(
     waveforms: dict[str, np.ndarray],
     examples: dict[str, SpeechExample],
 ) -> ReferenceOutputs:
-    """Run Hugging Face's Qwen3-ASR on the processor's inputs in fp32, then in bf16.
-
-    The released weights are bf16, so the model keeps them exactly in bf16 afterwards, for
-    Megatron-Bridge to load at half the memory of fp32.
-    """
+    """Run Hugging Face's Qwen3-ASR in fp32, then in bf16, which holds the released weights."""
     model = hf_pretrained.model
     answer = f"language English<asr_text>{TRANSCRIPT}<|im_end|>"
 
@@ -169,8 +151,7 @@ def run_reference(
                 utterance_logits, inputs.input_ids[0], examples[name].loss_mask.cuda()
             ).backward()
             logits[name] = utterance_logits.detach().float()
-        # The names of the state dict are those that Megatron-Bridge exports, with the output
-        # weight that is tied to the word embeddings. Only rank 0 compares gradients.
+        # The state dict has the names that Megatron-Bridge exports, with the tied output weight.
         gradients = {}
         if torch.distributed.get_rank() == 0:
             gradients = {
@@ -194,12 +175,8 @@ def build_config(dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLLMConf
 def build_model(
     reference: ReferenceOutputs, config: SpeechLLMConfig, hf_pretrained: PreTrainedCausalLM
 ) -> MimoModel:
-    """Build the speech LLM of the released Qwen3-ASR with its weights.
-
-    ``reference`` runs first, so that Megatron-Bridge reads the bf16 weights.
-    """
-    # The hooks of Megatron's DistributedDataParallel keep the model of the previous dtype in a
-    # reference cycle, which only the cycle collector frees.
+    """Build the speech LLM of the released Qwen3-ASR with its weights, after ``reference``."""
+    # Free the model of the previous dtype, which DistributedDataParallel's hooks hold in a cycle.
     gc.collect()
     model = build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups()).cuda()
     BRIDGE.load_weights_hf_to_megatron(hf_pretrained, [model])
@@ -216,13 +193,9 @@ def calc_model_outputs(
     """Run the model under test as training does: one packed row, log-mel on the GPU."""
 
     def export_gradients() -> dict[str, torch.Tensor]:
-        """Return the gradients of ``model`` by Hugging Face weight name, on rank 0's CPU.
+        """Export ``main_grad``, where DistributedDataParallel keeps gradients, as the weights.
 
-        The gradients are those that Megatron's ``DistributedDataParallel`` keeps in ``main_grad``,
-        the only place that holds them: its hooks move each ``grad`` there and clear ``grad``, and
-        ``finalize_model_grads`` and Megatron's optimizer read them there.
-        The export to Hugging Face only rearranges tensors (fused QKV, tensor parallel shards),
-        so exporting the gradients in place of the weights gives them Hugging Face's layout.
+        Return them by Hugging Face weight name, on rank 0's CPU.
         """
         params = list(model.parameters())
         weights = [param.data for param in params]
@@ -252,9 +225,7 @@ def calc_model_outputs(
     token_counts = [len(example.input_ids) for example in examples.values()]
     # The positions start again at 0 in each utterance.
     position_ids = torch.cat([torch.arange(token_count) for token_count in token_counts])
-    # As in training: Megatron's DistributedDataParallel accumulates the gradients, in fp32 as
-    # Megatron's arguments choose for bf16, and finalize_model_grads sums the gradients of the
-    # LLM's QK layernorms, of which each tensor parallel rank holds the part of its own heads.
+    # As in training: fp32 gradients; finalize_model_grads sums QK layernorm gradients over TP.
     ddp_model = DistributedDataParallel(
         config.llm.transformer, DistributedDataParallelConfig(grad_reduce_in_fp32=True), model
     )
@@ -295,11 +266,10 @@ def calc_errors(
     reference_bf16_values: dict[str, torch.Tensor],
     dtype: torch.dtype,
 ) -> dict[str, float]:
-    """Calculate the error of each of ``values`` that the limits of ``dtype`` bound.
+    """Calculate the error of each of ``values`` against Hugging Face's fp32 values.
 
-    - fp32: the largest relative error against Hugging Face's fp32 value.
-    - bf16: the distance from Hugging Face's fp32 value, as the norm of the difference over the
-      norm of the fp32 value, divided by the distance of Hugging Face's bf16 value.
+    - fp32: the largest relative error.
+    - bf16: the norm relative error, divided by that of Hugging Face's bf16 values.
     """
     if dtype == torch.float32:
         return {
@@ -333,9 +303,7 @@ def test_gradients_match_hf(
 ) -> None:
     """Check that every weight gets the gradient of Hugging Face's Qwen3-ASR.
 
-    The encoder's key bias gets no gradient in exact arithmetic: it adds one value to the scores
-    of all keys of a query, which the softmax ignores, so only rounding noise remains. It is
-    compared together with the query and value biases, which Megatron holds in one tensor.
+    The encoder's key bias, whose exact gradient is 0, is compared joined with the q and v biases.
     """
     if torch.distributed.get_rank() != 0:  # the other ranks get no exported gradients
         return
