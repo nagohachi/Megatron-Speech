@@ -1,9 +1,12 @@
 import torch
+from transformers import AutoProcessor
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
 
 # The released Qwen3-ASR that tests compare with.
 HF_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
+# Its processor, downloaded if it is not in the cache.
+PROCESSOR = AutoProcessor.from_pretrained(HF_MODEL)
 # Qwen3-ASR-1.7B's transcript of a LibriSpeech test-clean utterance: cased, with punctuation.
 TRANSCRIPT = "Concord returned to its place amidst the tents."
 # Lengths in samples, at 16 kHz, of the waveforms that tests compare with Hugging Face's
