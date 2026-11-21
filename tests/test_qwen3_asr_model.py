@@ -12,7 +12,6 @@ from megatron.core.distributed import (
     DistributedDataParallelConfig,
     finalize_model_grads,
 )
-from megatron.core.models.mimo import MimoModel
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import gather_from_tensor_model_parallel_region
 from transformers import (
@@ -29,12 +28,7 @@ from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMel, Qwen3
 from megatron_speech.conversion.bridge import MappingBridge
 from megatron_speech.conversion.qwen3_asr import build_qwen3_asr_mappings
 from megatron_speech.data.qwen3_asr import Qwen3ASRExampleBuilder, SpeechExample
-from megatron_speech.models.speech_llm import (
-    AUDIO_MODALITY,
-    ENCODER_NAME,
-    SpeechLLMConfig,
-    build_speech_llm,
-)
+from megatron_speech.models.speech_llm import AUDIO_MODALITY, ENCODER_NAME, build_speech_llm
 from tests.hf_audio_inputs import HF_MODEL, TRANSCRIPT, WAVEFORM_LENGTHS
 from tests.numerical_error import calc_norm_relative_error, calc_relative_error
 from tests.qwen3_asr_config import build_speech_llm_config
@@ -152,30 +146,30 @@ def run_reference(
     return ReferenceOutputs(fp32=run_in_dtype(torch.float32), bf16=run_in_dtype(torch.bfloat16))
 
 
-@pytest.fixture(name="config", scope="module")
-def build_config(dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLLMConfig:
-    """Build the config of the released Qwen3-ASR as a speech LLM with ``dtype`` parameters."""
-    return build_speech_llm_config(
-        Qwen3ASRConfig.from_pretrained(HF_MODEL), dtype, tensor_parallel_size
-    )
-
-
 @pytest.fixture(name="model", scope="module")
 def build_model(
-    reference: ReferenceOutputs, config: SpeechLLMConfig, hf_pretrained: PreTrainedCausalLM
-) -> MimoModel:
+    reference: ReferenceOutputs,
+    dtype: torch.dtype,
+    tensor_parallel_size: int,
+    hf_pretrained: PreTrainedCausalLM,
+) -> DistributedDataParallel:
     """Build the speech LLM of the released Qwen3-ASR with its weights, after ``reference``."""
     # Free the model of the previous dtype, which DistributedDataParallel's hooks hold in a cycle.
     gc.collect()
+    config = build_speech_llm_config(
+        Qwen3ASRConfig.from_pretrained(HF_MODEL), dtype, tensor_parallel_size
+    )
     model = build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups()).cuda()
     BRIDGE.load_weights_hf_to_megatron(hf_pretrained, [model])
-    return model
+    # As in training, Megatron's DistributedDataParallel accumulates the gradients in fp32.
+    return DistributedDataParallel(
+        config.llm.transformer, DistributedDataParallelConfig(grad_reduce_in_fp32=True), model
+    )
 
 
 @pytest.fixture(name="model_outputs", scope="module")
 def calc_model_outputs(
-    model: MimoModel,
-    config: SpeechLLMConfig,
+    model: DistributedDataParallel,
     hf_pretrained: PreTrainedCausalLM,
     examples: dict[str, SpeechExample],
 ) -> ModelOutputs:
@@ -205,7 +199,7 @@ def calc_model_outputs(
         """Compute the log-mel of all utterances on the GPU and cut it for the encoder."""
         log_mel_transform = Qwen3ASRLogMel(Qwen3ASRLogMelConfig()).cuda()
         mels = log_mel_transform([example.waveform.cuda() for example in examples.values()])
-        encoder_inputs = Qwen3ASREncoderInputs.build(mels, config.encoder).to("cuda")
+        encoder_inputs = Qwen3ASREncoderInputs.build(mels, Qwen3ASREncoderConfig()).to("cuda")
         encoder_kwargs = {
             field.name: getattr(encoder_inputs, field.name) for field in fields(encoder_inputs)
         }
@@ -214,11 +208,7 @@ def calc_model_outputs(
     token_counts = [len(example.input_ids) for example in examples.values()]
     # The positions start again at 0 in each utterance.
     position_ids = torch.cat([torch.arange(token_count) for token_count in token_counts])
-    # As in training: fp32 gradients; finalize_model_grads sums QK layernorm gradients over TP.
-    ddp_model = DistributedDataParallel(
-        config.llm.transformer, DistributedDataParallelConfig(grad_reduce_in_fp32=True), model
-    )
-    logits, _ = ddp_model(
+    logits, _ = model(
         input_ids=torch.cat([example.input_ids for example in examples.values()])[None].cuda(),
         position_ids=position_ids[None].cuda(),
         modality_inputs=build_modality_inputs(),
@@ -239,7 +229,7 @@ def calc_model_outputs(
         )
         for name, example in examples.items()
     ).backward()
-    finalize_model_grads([ddp_model])
+    finalize_model_grads([model])  # sums the QK layernorm gradients over TP, as in training
     return ModelOutputs(
         logits={
             name: utterance_logits.detach().float()
