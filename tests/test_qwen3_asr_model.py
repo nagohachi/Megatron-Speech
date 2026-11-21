@@ -39,7 +39,11 @@ from tests.hf_audio_inputs import HF_MODEL, TRANSCRIPT, WAVEFORM_LENGTHS
 from tests.numerical_error import calc_norm_relative_error, calc_relative_error
 from tests.qwen3_asr_config import build_speech_llm_config
 
-pytestmark = pytest.mark.gpu
+# In module scope, both tests of a dtype share one model.
+pytestmark = [
+    pytest.mark.gpu,
+    pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16], ids=str, scope="module"),
+]
 logger = logging.getLogger(__name__)
 
 BRIDGE = MappingBridge(build_qwen3_asr_mappings())
@@ -66,12 +70,6 @@ class ReferenceOutputs:
 
     fp32: ModelOutputs
     bf16: ModelOutputs
-
-
-@pytest.fixture(name="dtype", scope="module", params=[torch.float32, torch.bfloat16], ids=str)
-def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
-    """Return the parameter dtype of the model under test, for all tests of one model."""
-    return request.param
 
 
 @pytest.fixture(name="waveforms", scope="module")
