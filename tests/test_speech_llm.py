@@ -221,27 +221,6 @@ def calc_model_llm_input(model: MimoModel, batch: Batch) -> torch.Tensor:
     return captured["decoder_input"]
 
 
-@pytest.fixture(name="reference_llm_input")
-def calc_reference_llm_input(model: MimoModel, batch: Batch) -> torch.Tensor:
-    """Calculate the LLM's input of the module-by-module reference, without gradients."""
-    with torch.no_grad():
-        return merge_reference_llm_input(model, batch)
-
-
-@pytest.fixture(name="model_loss")
-def calc_model_loss(model: MimoModel, batch: Batch) -> torch.Tensor:
-    """Calculate the loss of the speech LLM under test without gradients."""
-    with torch.no_grad():
-        return calc_mimo_loss(model, batch)
-
-
-@pytest.fixture(name="reference_loss")
-def calc_reference_loss(model: MimoModel, batch: Batch) -> torch.Tensor:
-    """Calculate the loss of the module-by-module reference without gradients."""
-    with torch.no_grad():
-        return run_reference(model, batch)
-
-
 def test_parameter_names_follow_module_tree(model: MimoModel) -> None:
     """Check that the parameters sit under the encoder, the projector and the LLM."""
     prefixes = {
@@ -256,19 +235,22 @@ def test_parameter_names_follow_module_tree(model: MimoModel) -> None:
 
 
 def test_llm_input_matches_reference(
-    model_llm_input: torch.Tensor, reference_llm_input: torch.Tensor, dtype: torch.dtype
+    model_llm_input: torch.Tensor, model: MimoModel, batch: Batch, dtype: torch.dtype
 ) -> None:
     """Check that the LLM's input holds the projected frames at the audio tokens, in order."""
+    with torch.no_grad():
+        reference_llm_input = merge_reference_llm_input(model, batch)
     assert model_llm_input.shape == reference_llm_input.shape
     error = calc_relative_error(model_llm_input, reference_llm_input)
     logger.info("%s: LLM input max relative error %.2e", dtype, error)
     assert error < TOLERANCES[dtype]
 
 
-def test_loss_matches_reference(
-    model_loss: torch.Tensor, reference_loss: torch.Tensor, batch: Batch, dtype: torch.dtype
-) -> None:
+def test_loss_matches_reference(model: MimoModel, batch: Batch, dtype: torch.dtype) -> None:
     """Check that the loss at the target tokens equals the module-by-module reference."""
+    with torch.no_grad():
+        model_loss = calc_mimo_loss(model, batch)
+        reference_loss = run_reference(model, batch)
     targets = batch.loss_mask.bool()
     error = calc_relative_error(model_loss[targets], reference_loss[targets])
     logger.info("%s: loss max relative error %.2e", dtype, error)
