@@ -19,7 +19,6 @@ from transformers import (
     AutoProcessor,
     Qwen3ASRConfig,
     Qwen3ASRForConditionalGeneration,
-    Qwen3ASRProcessor,
 )
 
 from megatron_speech.components.encoders.qwen3_asr import (
@@ -44,6 +43,7 @@ pytestmark = pytest.mark.gpu
 logger = logging.getLogger(__name__)
 
 BRIDGE = MappingBridge(build_qwen3_asr_mappings())
+PROCESSOR = AutoProcessor.from_pretrained(HF_MODEL)
 # 10 s of audio has 130 encoder frames, which the encoder attends in two windows.
 UTTERANCE_LENGTHS = {**WAVEFORM_LENGTHS, "longer-than-a-window": 160000}
 # Limits of ``calc_errors``. Largest measured: fp32 logits 6.4e-5, gradients 1.1e-3; bf16
@@ -74,12 +74,6 @@ def get_dtype(request: pytest.FixtureRequest) -> torch.dtype:
     return request.param
 
 
-@pytest.fixture(name="processor", scope="module")
-def build_processor() -> Qwen3ASRProcessor:
-    """Load Qwen3-ASR's processor, downloading its files if they are not in the cache."""
-    return AutoProcessor.from_pretrained(HF_MODEL)
-
-
 @pytest.fixture(name="waveforms", scope="module")
 def build_waveforms() -> dict[str, np.ndarray]:
     """Build noise of each length of ``UTTERANCE_LENGTHS``, by name."""
@@ -91,12 +85,10 @@ def build_waveforms() -> dict[str, np.ndarray]:
 
 
 @pytest.fixture(name="examples", scope="module")
-def build_examples(
-    processor: Qwen3ASRProcessor, waveforms: dict[str, np.ndarray]
-) -> dict[str, SpeechExample]:
+def build_examples(waveforms: dict[str, np.ndarray]) -> dict[str, SpeechExample]:
     """Build the training example of each waveform with ``TRANSCRIPT`` in English."""
     builder = Qwen3ASRExampleBuilder(
-        processor, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", False
+        PROCESSOR, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", False
     )
     return {name: builder.build(waveform, TRANSCRIPT) for name, waveform in waveforms.items()}
 
@@ -129,7 +121,6 @@ def build_hf_pretrained() -> PreTrainedCausalLM:
 @pytest.fixture(name="reference", scope="module")
 def run_reference(
     hf_pretrained: PreTrainedCausalLM,
-    processor: Qwen3ASRProcessor,
     waveforms: dict[str, np.ndarray],
     examples: dict[str, SpeechExample],
 ) -> ReferenceOutputs:
@@ -142,8 +133,8 @@ def run_reference(
         model.to(dtype)
         logits = {}
         for name, waveform in waveforms.items():
-            prompt = processor.apply_transcription_request(waveform, tokenize=False)[0]
-            inputs = processor(text=[prompt + answer], audio=[waveform], return_tensors="pt").to(
+            prompt = PROCESSOR.apply_transcription_request(waveform, tokenize=False)[0]
+            inputs = PROCESSOR(text=[prompt + answer], audio=[waveform], return_tensors="pt").to(
                 "cuda", dtype
             )
             utterance_logits = model(**inputs).logits[0]
