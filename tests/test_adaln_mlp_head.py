@@ -144,7 +144,7 @@ class ReferenceHead(torch.nn.Module):
         num_frequencies = self.head_config.frequency_embedding_size // 2
         frequencies = torch.exp(
             -math.log(self.head_config.max_period)
-            * torch.arange(num_frequencies, device="cuda")
+            * torch.arange(num_frequencies, device=noisy_latents.device)
             / num_frequencies
         )
         condition = self.condition_projection(hidden_states).unsqueeze(1)
