@@ -160,6 +160,12 @@ def build_cpu_inputs(mels: list[torch.Tensor]) -> Qwen3ASREncoderInputs:
     return Qwen3ASREncoderInputs.build(mels, ENCODER_CONFIG)
 
 
+@pytest.fixture(name="inputs")
+def copy_inputs_to_gpu(cpu_inputs: Qwen3ASREncoderInputs) -> Qwen3ASREncoderInputs:
+    """Copy the encoder inputs of the test utterances to the GPU."""
+    return cpu_inputs.to("cuda")
+
+
 @pytest.fixture(name="hf_window_bounds")
 def calc_hf_window_bounds(mels: list[torch.Tensor]) -> list[int]:
     """Calculate the cumulative encoder frame counts of the windows as Hugging Face does."""
@@ -245,12 +251,10 @@ def calc_hf_output(reference: HFEncoder, mels: list[torch.Tensor]) -> torch.Tens
 
 
 @pytest.fixture(name="encoder_output")
-def calc_encoder_output(
-    encoder: Qwen3ASREncoder, cpu_inputs: Qwen3ASREncoderInputs
-) -> torch.Tensor:
+def calc_encoder_output(encoder: Qwen3ASREncoder, inputs: Qwen3ASREncoderInputs) -> torch.Tensor:
     """Calculate the output of the encoder under test for the test utterances without gradients."""
     with torch.no_grad():
-        return encoder(**vars(cpu_inputs.to("cuda")))
+        return encoder(**vars(inputs))
 
 
 @pytest.mark.gpu
@@ -277,12 +281,12 @@ def test_gradients_match_hf(
     encoder: Qwen3ASREncoder,
     reference: HFEncoder,
     mels: list[torch.Tensor],
-    cpu_inputs: Qwen3ASREncoderInputs,
+    inputs: Qwen3ASREncoderInputs,
     dtype: torch.dtype,
 ) -> None:
     """Check that weight gradients equal the reference ones, combined and split as the weights."""
     expected = run_hf_encoder(reference, mels)
-    actual = encoder(**vars(cpu_inputs.to("cuda")))
+    actual = encoder(**vars(inputs))
     grad_output = torch.randn_like(expected)
     expected.backward(grad_output)
     actual.backward(grad_output.to(dtype))
