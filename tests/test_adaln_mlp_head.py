@@ -54,7 +54,12 @@ class ReferenceMLP(torch.nn.Module):
     """
 
     def __init__(
-        self, input_size: int, ffn_hidden_size: int, output_size: int, activation: str, gated_linear_unit: bool
+        self,
+        input_size: int,
+        ffn_hidden_size: int,
+        output_size: int,
+        activation: str,
+        gated_linear_unit: bool,
     ) -> None:
         """Build the layers with PyTorch's default initialization."""
         super().__init__()
