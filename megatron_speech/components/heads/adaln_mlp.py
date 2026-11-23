@@ -128,7 +128,15 @@ class AdaLNMLPHead(MegatronModule):
         tp_size = llm_config.tensor_model_parallel_size
 
         def check_config() -> None:
-            """Raise ValueError for a config that cannot be built on ``tp_size`` ranks."""
+            """Raise ValueError for an invalid config or one that ``tp_size`` ranks cannot split."""
+            if head_config.num_layers < 1:
+                raise ValueError(f"num_layers must be at least 1, got {head_config.num_layers}")
+            if head_config.activation not in ACTIVATIONS:
+                raise ValueError(
+                    f"activation={head_config.activation!r} is not one of {sorted(ACTIVATIONS)}"
+                )
+            if head_config.max_period <= 0:
+                raise ValueError(f"max_period must be positive, got {head_config.max_period}")
             if pg_collection is not None and pg_collection.tp.size() != tp_size:
                 raise ValueError(
                     f"pg_collection.tp has {pg_collection.tp.size()} ranks, but "

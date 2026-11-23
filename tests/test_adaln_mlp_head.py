@@ -394,6 +394,18 @@ def test_rejects_sizes_not_divisible_by_tp(tensor_parallel_size: int, field: str
         AdaLNMLPHead(head_config, build_llm_config(tensor_parallel_size, torch.float32))
 
 
+# A value of each setting that the head cannot use.
+INVALID_SETTINGS = {"num_layers": 0, "activation": "swish", "max_period": 0.0}
+
+
+@pytest.mark.parametrize("field", list(INVALID_SETTINGS))
+def test_rejects_invalid_settings(tensor_parallel_size: int, field: str) -> None:
+    """Check that a setting the head cannot use raises ValueError naming the field."""
+    head_config = replace(BASE_CONFIG, **{field: INVALID_SETTINGS[field]})
+    with pytest.raises(ValueError, match=field):
+        AdaLNMLPHead(head_config, build_llm_config(tensor_parallel_size, torch.float32))
+
+
 def test_rejects_odd_frequency_embedding_size(tensor_parallel_size: int) -> None:
     """Check that an odd number of sinusoidal features raises ValueError."""
     head_config = replace(BASE_CONFIG, frequency_embedding_size=31)
