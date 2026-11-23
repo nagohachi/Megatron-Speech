@@ -33,56 +33,8 @@ class OutputProcessorArguments(TypedDict):
     config: TransformerConfig
 
 
-class SpeechLanguageModel(GPTModel):
-    """``GPTModel`` used as the LLM of the speech LLM."""
-
-    def forward(
-        self,
-        input_ids: torch.Tensor | None,
-        position_ids: torch.Tensor | None,
-        attention_mask: torch.Tensor | None,
-        decoder_input: torch.Tensor | None = None,
-        labels: torch.Tensor | None = None,
-        *,
-        loss_mask: torch.Tensor | None = None,
-        mtp_input_mask: torch.Tensor | None = None,
-        packed_seq_params: PackedSeqParams | None = None,
-    ) -> torch.Tensor:
-        """Run ``GPTModel.forward`` with the arguments that ``MimoModel`` passes.
-
-        The return value depends on ``labels`` and ``loss_mask``:
-
-        - both given: the loss ``[batch, sequence]`` from ``calc_target_loss``, computed only
-          where ``loss_mask`` is set and 0 elsewhere.
-        - ``labels`` only: ``GPTModel``'s loss ``[batch, sequence]`` at every position.
-        - no ``labels``: ``GPTModel``'s logits ``[batch, sequence, vocabulary]``, split over the TP
-          ranks along the vocabulary.
-        """
-
-        def calc_target_loss_from_last_layer(
-            *, hidden_states: torch.Tensor, **_: Unpack[OutputProcessorArguments]
-        ) -> torch.Tensor:
-            """Gather the output of the last layer and pass it to ``calc_target_loss``.
-
-            ``GPTModel`` calls this as its ``output_processor``.
-            """
-            return self.calc_target_loss(
-                self.gather_last_layer_output(hidden_states), labels, loss_mask
-            )
-
-        return super().forward(
-            input_ids,
-            position_ids,
-            attention_mask,
-            decoder_input,
-            labels,
-            packed_seq_params=packed_seq_params,
-            loss_mask=loss_mask,
-            mtp_input_mask=mtp_input_mask,
-            output_processor=(
-                None if labels is None or loss_mask is None else calc_target_loss_from_last_layer
-            ),
-        )
+class TargetLossLanguageModel(GPTModel):
+    """``GPTModel`` that computes the loss only at the target positions of the last layer."""
 
     def gather_last_layer_output(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Gather the ``[sequence, batch, hidden]`` output that sequence parallelism splits.
@@ -134,7 +86,59 @@ class SpeechLanguageModel(GPTModel):
         return loss.index_put(target_indices, target_loss[0]).transpose(0, 1).contiguous()
 
 
-class MultiStreamLanguageModel(SpeechLanguageModel):
+class SpeechLanguageModel(TargetLossLanguageModel):
+    """``GPTModel`` used as the LLM of the speech LLM."""
+
+    def forward(
+        self,
+        input_ids: torch.Tensor | None,
+        position_ids: torch.Tensor | None,
+        attention_mask: torch.Tensor | None,
+        decoder_input: torch.Tensor | None = None,
+        labels: torch.Tensor | None = None,
+        *,
+        loss_mask: torch.Tensor | None = None,
+        mtp_input_mask: torch.Tensor | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
+    ) -> torch.Tensor:
+        """Run ``GPTModel.forward`` with the arguments that ``MimoModel`` passes.
+
+        The return value depends on ``labels`` and ``loss_mask``:
+
+        - both given: the loss ``[batch, sequence]`` from ``calc_target_loss``, computed only
+          where ``loss_mask`` is set and 0 elsewhere.
+        - ``labels`` only: ``GPTModel``'s loss ``[batch, sequence]`` at every position.
+        - no ``labels``: ``GPTModel``'s logits ``[batch, sequence, vocabulary]``, split over the TP
+          ranks along the vocabulary.
+        """
+
+        def calc_target_loss_from_last_layer(
+            *, hidden_states: torch.Tensor, **_: Unpack[OutputProcessorArguments]
+        ) -> torch.Tensor:
+            """Gather the output of the last layer and pass it to ``calc_target_loss``.
+
+            ``GPTModel`` calls this as its ``output_processor``.
+            """
+            return self.calc_target_loss(
+                self.gather_last_layer_output(hidden_states), labels, loss_mask
+            )
+
+        return super().forward(
+            input_ids,
+            position_ids,
+            attention_mask,
+            decoder_input,
+            labels,
+            packed_seq_params=packed_seq_params,
+            loss_mask=loss_mask,
+            mtp_input_mask=mtp_input_mask,
+            output_processor=(
+                None if labels is None or loss_mask is None else calc_target_loss_from_last_layer
+            ),
+        )
+
+
+class MultiStreamLanguageModel(TargetLossLanguageModel):
     """LLM of a model that predicts the text and the audio from the output of the last layer.
 
     ``forward`` returns this output; the caller computes the text loss with
@@ -170,9 +174,7 @@ class MultiStreamLanguageModel(SpeechLanguageModel):
             """Return the gathered last layer output; ``GPTModel`` calls this as its processor."""
             return self.gather_last_layer_output(hidden_states)
 
-        # SpeechLanguageModel.forward returns the logits without labels, so call GPTModel's.
-        return GPTModel.forward(
-            self,
+        return super().forward(
             input_ids,
             position_ids,
             attention_mask,
