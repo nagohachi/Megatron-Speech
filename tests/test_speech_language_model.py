@@ -154,7 +154,7 @@ def build_batch(target_pattern: str, qkv_format: str) -> Batch:
     )
 
 
-def run_reference(reference: GPTModel, batch: Batch) -> torch.Tensor:
+def run_reference_loss(reference: GPTModel, batch: Batch) -> torch.Tensor:
     """Run ``GPTModel``, which computes the logits and the loss at every position."""
     return reference(
         batch.input_ids,
@@ -181,7 +181,7 @@ def calc_loss_at_targets(model: SpeechLanguageModel, batch: Batch) -> torch.Tens
 def calc_reference_loss(reference: GPTModel, batch: Batch) -> torch.Tensor:
     """Calculate the reference loss ``[batch, sequence]`` without gradients."""
     with torch.no_grad():
-        return run_reference(reference, batch)
+        return run_reference_loss(reference, batch)
 
 
 @pytest.fixture(name="model_loss")
@@ -194,7 +194,7 @@ def calc_model_loss(model: SpeechLanguageModel, batch: Batch) -> torch.Tensor:
 @pytest.fixture(name="reference_gradients")
 def calc_reference_gradients(reference: GPTModel, batch: Batch) -> dict[str, torch.Tensor | None]:
     """Calculate the reference gradients of the loss summed with ``loss_mask``, by parameter."""
-    (run_reference(reference, batch) * batch.loss_mask).sum().backward()
+    (run_reference_loss(reference, batch) * batch.loss_mask).sum().backward()
     return {name: param.grad for name, param in reference.named_parameters()}
 
 
@@ -303,7 +303,7 @@ def test_returns_gpt_model_loss_without_loss_mask(
     assert error < TOLERANCES[dtype]
 
 
-def calc_reference_last_layer_output(reference: GPTModel, batch: Batch) -> torch.Tensor:
+def run_reference_last_layer(reference: GPTModel, batch: Batch) -> torch.Tensor:
     """Return the reference's last layer output, this rank's part under sequence parallelism."""
     return reference(
         batch.input_ids,
@@ -349,7 +349,7 @@ def test_multi_stream_output_matches_gpt_model(
     """Check that every rank gets the whole output of ``GPTModel``'s last layer."""
     with torch.no_grad():
         output = calc_multi_stream_output(multi_stream_model, batch)
-        reference_output = calc_reference_last_layer_output(reference, batch)
+        reference_output = run_reference_last_layer(reference, batch)
     batch_size, sequence_length = batch.input_ids.shape
     assert output.shape == (sequence_length, batch_size, reference_output.size(-1))
     error = calc_relative_error(
@@ -376,7 +376,7 @@ def test_multi_stream_output_gradients_match_gpt_model(
     torch.manual_seed(2)
     output_weights = torch.randn(output.shape).cuda()
     (output.float() * output_weights).sum().backward()
-    reference_output = calc_reference_last_layer_output(reference, batch)
+    reference_output = run_reference_last_layer(reference, batch)
     rank_output_weights = take_rank_part(output_weights, sequence_parallel, tensor_parallel_size)
     (reference_output * rank_output_weights).sum().backward()
     reference_gradients = dict(reference.named_parameters())
