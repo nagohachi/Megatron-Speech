@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> None:
     for part, cuts in RECIPES[args.recipe](args.corpus_dir, args.parts, args.num_jobs).items():
         part_dir = args.output_dir / part
         part_dir.mkdir(parents=True, exist_ok=True)
-        # Recipes list the utterances in file order, by speaker; shuffling puts many in a shard.
+        # Recipes may list the utterances grouped by speaker; shuffle so that each shard mixes them.
         cuts.shuffle(random.Random(args.seed)).to_shar(
             part_dir,
             fields={"recording": "flac"},
