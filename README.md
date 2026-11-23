@@ -45,7 +45,7 @@ third_party/Megatron-LM/    上流の固定コミット（git submodule status �
 patches/                    Megatron-LM へのパッチ（現在は空）
 apptainer/                  コンテナの起動スクリプトと venv の構築
 megatron_speech/
-  components/               音声 LLM の component（encoder、projector）
+  components/               音声 LLM の component（encoder、projector、音声の head）
   training/                 学習の entry point、設定ファイルの読み込み、recipe
 tests/                      テスト
 configs/                    設定ファイルの例
