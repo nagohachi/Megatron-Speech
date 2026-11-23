@@ -24,7 +24,8 @@ class AdaLNMLPHeadConfig:
     ``activation`` (a key of ``ACTIVATIONS``), and multiplies it by a second projection when
     ``gated_linear_unit`` is set (SwiGLU for ``"silu"``). ``scalar_condition_names`` name the
     scalars, such as the diffusion time, that condition the head besides the LLM hidden state;
-    each is embedded by ``frequency_embedding_size`` sinusoidal features and a two-layer MLP.
+    each is embedded by ``frequency_embedding_size`` sinusoidal features, whose frequencies fall
+    from 1 to about ``1 / max_period``, and a two-layer MLP.
     """
 
     latent_size: int
@@ -35,6 +36,7 @@ class AdaLNMLPHeadConfig:
     activation: str = "silu"
     gated_linear_unit: bool = True
     frequency_embedding_size: int = 256
+    max_period: float = 10000.0
     norm_eps: float = 1e-5
 
 
@@ -191,7 +193,7 @@ class AdaLNMLPHead(MegatronModule):
         )
         num_frequencies = head_config.frequency_embedding_size // 2
         frequencies = torch.exp(
-            -math.log(10000.0) * torch.arange(num_frequencies) / num_frequencies
+            -math.log(head_config.max_period) * torch.arange(num_frequencies) / num_frequencies
         )
         self.register_buffer("frequencies", frequencies, persistent=False)
         self.layers = torch.nn.ModuleList(

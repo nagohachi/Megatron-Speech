@@ -143,7 +143,9 @@ class ReferenceHead(torch.nn.Module):
         """Apply the head as ``AdaLNMLPHead`` does."""
         num_frequencies = self.head_config.frequency_embedding_size // 2
         frequencies = torch.exp(
-            -math.log(10000.0) * torch.arange(num_frequencies, device="cuda") / num_frequencies
+            -math.log(self.head_config.max_period)
+            * torch.arange(num_frequencies, device="cuda")
+            / num_frequencies
         )
         condition = self.condition_projection(hidden_states).unsqueeze(1)
         for name, embedding in self.scalar_embeddings.items():
