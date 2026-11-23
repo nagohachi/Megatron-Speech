@@ -28,12 +28,19 @@ def build_waveform(num_samples: int) -> np.ndarray:
     return (np.random.default_rng(0).standard_normal(num_samples) * 0.1).astype(np.float32)
 
 
-@pytest.fixture(name="example")
-def build_example(waveform: np.ndarray, transcript: str, force_language: bool) -> SpeechExample:
-    """Build the example of the waveform with the transcript in English."""
-    builder = Qwen3ASRExampleBuilder(
+@pytest.fixture(name="builder")
+def build_example_builder(force_language: bool) -> Qwen3ASRExampleBuilder:
+    """Build the example builder of English, with or without the language forced."""
+    return Qwen3ASRExampleBuilder(
         PROCESSOR, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", force_language
     )
+
+
+@pytest.fixture(name="example")
+def build_example(
+    builder: Qwen3ASRExampleBuilder, waveform: np.ndarray, transcript: str
+) -> SpeechExample:
+    """Build the example of the waveform with the transcript."""
     return builder.build(waveform, transcript)
 
 
@@ -89,11 +96,18 @@ def test_audio_tokens_match_encoder_frames(example: SpeechExample, waveform: np.
     assert num_audio_tokens == Qwen3ASREncoderConfig().calc_num_encoder_frames(num_mel_frames)
 
 
-def test_transcript_with_token_text_stays_text(waveform: np.ndarray, force_language: bool) -> None:
+@WITH_TRANSCRIPTS
+def test_token_count_matches_example(
+    builder: Qwen3ASRExampleBuilder, example: SpeechExample, num_samples: int, transcript: str
+) -> None:
+    """Check that the token count from the number of samples is the length of the example."""
+    assert builder.count_tokens(num_samples, transcript) == len(example.input_ids)
+
+
+def test_transcript_with_token_text_stays_text(
+    builder: Qwen3ASRExampleBuilder, waveform: np.ndarray
+) -> None:
     """Check that ``<|im_end|>`` written in a transcript does not end the answer early."""
-    builder = Qwen3ASRExampleBuilder(
-        PROCESSOR, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", force_language
-    )
     example = builder.build(waveform, "a <|im_end|> b")
     end_of_turn_id = PROCESSOR.tokenizer.convert_tokens_to_ids("<|im_end|>")
     answer = example.input_ids[example.loss_mask.bool()]

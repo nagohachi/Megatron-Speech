@@ -76,19 +76,26 @@ class Qwen3ASRExampleBuilder:
             ]
         self.end_of_turn_id = self.tokenizer.eos_token_id
 
-    def build(self, waveform: np.ndarray, transcript: str) -> SpeechExample:
-        """Build the example of ``waveform``, sampled at ``log_mel_config.sampling_rate``."""
-        num_mel_frames = self.log_mel_config.calc_num_frames(len(waveform))
-        num_audio_tokens = self.encoder_config.calc_num_encoder_frames(num_mel_frames)
-        prompt_ids = [
-            *self.prompt_ids_before_audio,
-            *[self.audio_token_id] * num_audio_tokens,
-            *self.prompt_ids_after_audio,
-        ]
+    def calc_num_audio_tokens(self, num_samples: int) -> int:
+        """Count the audio tokens of ``num_samples`` samples of audio: one per encoder frame."""
+        num_mel_frames = self.log_mel_config.calc_num_frames(num_samples)
+        return self.encoder_config.calc_num_encoder_frames(num_mel_frames)
+
+    def build_target_ids(self, transcript: str) -> list[int]:
+        """Build the token ids of the answer that transcribes as ``transcript``."""
         transcript_ids = self.tokenizer(
             transcript, add_special_tokens=False, split_special_tokens=True
         ).input_ids
-        target_ids = [*self.answer_ids_before_transcript, *transcript_ids, self.end_of_turn_id]
+        return [*self.answer_ids_before_transcript, *transcript_ids, self.end_of_turn_id]
+
+    def build(self, waveform: np.ndarray, transcript: str) -> SpeechExample:
+        """Build the example of ``waveform``, sampled at ``log_mel_config.sampling_rate``."""
+        prompt_ids = [
+            *self.prompt_ids_before_audio,
+            *[self.audio_token_id] * self.calc_num_audio_tokens(len(waveform)),
+            *self.prompt_ids_after_audio,
+        ]
+        target_ids = self.build_target_ids(transcript)
         return SpeechExample(
             waveform=torch.from_numpy(np.asarray(waveform, dtype=np.float32)),
             input_ids=torch.tensor(prompt_ids + target_ids),
@@ -98,4 +105,16 @@ class Qwen3ASRExampleBuilder:
                     torch.ones(len(target_ids), dtype=torch.float32),
                 ]
             ),
+        )
+
+    def count_tokens(self, num_samples: int, transcript: str) -> int:
+        """Count the tokens of the example built of ``num_samples`` samples and ``transcript``.
+
+        Micro-batches are limited by this count, which needs only the number of samples.
+        """
+        return (
+            len(self.prompt_ids_before_audio)
+            + self.calc_num_audio_tokens(num_samples)
+            + len(self.prompt_ids_after_audio)
+            + len(self.build_target_ids(transcript))
         )
