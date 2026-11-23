@@ -4,7 +4,6 @@ from itertools import accumulate
 
 import pytest
 import torch
-from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.packed_seq_params import PackedSeqParams
@@ -13,6 +12,7 @@ from megatron.core.transformer import TransformerConfig
 
 from megatron_speech.models.language_model import MultiStreamLanguageModel, SpeechLanguageModel
 from tests.numerical_error import TOLERANCES, WITH_DTYPES, calc_relative_error
+from tests.tensor_parallel_shard import take_shard
 
 pytestmark = [
     pytest.mark.gpu,
@@ -328,15 +328,6 @@ def calc_multi_stream_target_loss(model: MultiStreamLanguageModel, batch: Batch)
     )
 
 
-def take_rank_part(
-    whole_output: torch.Tensor, sequence_parallel: bool, tensor_parallel_size: int
-) -> torch.Tensor:
-    """Return the part of ``[sequence, ...]`` that this rank holds under sequence parallelism."""
-    if not sequence_parallel:
-        return whole_output
-    return whole_output.chunk(tensor_parallel_size)[parallel_state.get_tensor_model_parallel_rank()]
-
-
 @pytest.mark.parametrize("target_pattern", ["some"])
 def test_multi_stream_output_matches_gpt_model(
     multi_stream_model: MultiStreamLanguageModel,
@@ -344,7 +335,6 @@ def test_multi_stream_output_matches_gpt_model(
     batch: Batch,
     dtype: torch.dtype,
     sequence_parallel: bool,
-    tensor_parallel_size: int,
 ) -> None:
     """Check that every rank gets the whole output of ``GPTModel``'s last layer."""
     with torch.no_grad():
@@ -352,9 +342,9 @@ def test_multi_stream_output_matches_gpt_model(
         reference_output = run_reference_last_layer(reference, batch)
     batch_size, sequence_length = batch.input_ids.shape
     assert output.shape == (sequence_length, batch_size, reference_output.size(-1))
-    error = calc_relative_error(
-        take_rank_part(output, sequence_parallel, tensor_parallel_size), reference_output
-    )
+    # Under sequence parallelism, the reference holds this rank's part of the sequence.
+    rank_output = take_shard(output, 0 if sequence_parallel else None)
+    error = calc_relative_error(rank_output, reference_output)
     logger.info("%s: last layer output max relative error %.2e", dtype, error)
     assert error < TOLERANCES[dtype]
 
@@ -366,7 +356,6 @@ def test_multi_stream_output_gradients_match_gpt_model(
     batch: Batch,
     dtype: torch.dtype,
     sequence_parallel: bool,
-    tensor_parallel_size: int,
 ) -> None:
     """Check that a weighted sum of the output gives every parameter ``GPTModel``'s gradient.
 
@@ -377,7 +366,7 @@ def test_multi_stream_output_gradients_match_gpt_model(
     output_weights = torch.randn(output.shape).cuda()
     (output.float() * output_weights).sum().backward()
     reference_output = run_reference_last_layer(reference, batch)
-    rank_output_weights = take_rank_part(output_weights, sequence_parallel, tensor_parallel_size)
+    rank_output_weights = take_shard(output_weights, 0 if sequence_parallel else None)
     (reference_output * rank_output_weights).sum().backward()
     reference_gradients = dict(reference.named_parameters())
     errors = {
