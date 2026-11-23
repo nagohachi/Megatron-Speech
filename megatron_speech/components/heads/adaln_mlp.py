@@ -229,14 +229,14 @@ class AdaLNMLPHead(MegatronModule):
                 f"scalar_conditions has {sorted(scalar_conditions)}, but the head is "
                 f"conditioned on {sorted(expected_names)}"
             )
-        dtype = self.config.params_dtype
-        # In fp32 here rather than in a buffer, which converting the head to bf16 would round.
+        # The frequencies are fp32 even when the head's parameters are bf16.
         num_frequencies = self.head_config.frequency_embedding_size // 2
         frequencies = torch.exp(
             -math.log(self.head_config.max_period)
             * torch.arange(num_frequencies, device=noisy_latents.device)
             / num_frequencies
         )
+        dtype = self.config.params_dtype
         condition = gather_from_tensor_model_parallel_region(
             self.condition_projection(hidden_states.to(dtype))[0]
         ).unsqueeze(1)
