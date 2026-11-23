@@ -92,10 +92,11 @@ def test_shards_hold_original_audio(shar_dir: Path, corpus_dir: Path) -> None:
 
 def test_seed_decides_utterance_order(corpus_dir: Path, tmp_path: Path) -> None:
     """Check that the same seed gives the same order of utterances, and another seed another."""
-    utterance_ids_seed0, utterance_ids_seed0_rerun, utterance_ids_seed1 = (
-        read_utterance_ids(write_shar(corpus_dir, tmp_path / name, seed))
-        for name, seed in [("seed0", 0), ("seed0-rerun", 0), ("seed1", 1)]
+    utterance_ids_seed0 = read_utterance_ids(write_shar(corpus_dir, tmp_path / "seed0", 0))
+    utterance_ids_seed0_rerun = read_utterance_ids(
+        write_shar(corpus_dir, tmp_path / "seed0-rerun", 0)
     )
+    utterance_ids_seed1 = read_utterance_ids(write_shar(corpus_dir, tmp_path / "seed1", 1))
     assert utterance_ids_seed0_rerun == utterance_ids_seed0
     assert utterance_ids_seed1 != utterance_ids_seed0
 
