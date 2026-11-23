@@ -48,9 +48,7 @@ def write_shar(corpus_dir: Path, output_dir: Path, seed: int) -> Path:
             str(SHARD_SIZE),
             "--seed",
             str(seed),
-            "--num-read-jobs",
-            "1",
-            "--num-write-jobs",
+            "--num-jobs",
             "1",
         ]
     )
@@ -112,7 +110,7 @@ def test_shards_hold_shard_size_utterances(shar_dir: Path) -> None:
     ]
 
 
-@pytest.mark.parametrize("option", ["--shard-size", "--num-read-jobs", "--num-write-jobs"])
+@pytest.mark.parametrize("option", ["--shard-size", "--num-jobs"])
 def test_rejects_counts_below_one(
     option: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
