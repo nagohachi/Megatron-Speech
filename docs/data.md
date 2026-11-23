@@ -1,6 +1,6 @@
 # データの準備
 
-学習のデータは lhotse Shar の形式で用意する。コーパスごとの recipe が発話ごとの cut を作り、`megatron_speech.data.shar` がそれを shard に書き出す。
+学習のデータは lhotse Shar の形式で用意する。コーパスの発話は、コーパスごとの recipe で 1 発話ずつ cut（lhotse で音声と書き起こしをまとめて表すもの）にし、`megatron_speech.data.shar` で shard（決まった数の発話をまとめたファイルの組）に書き出す。
 
 ```bash
 apptainer/run.sh python -m megatron_speech.data.shar <recipe> <コーパスのディレクトリ> <出力先> --parts <part>...
