@@ -319,17 +319,17 @@ def test_gradients_match_torch(
     """Check that gradients of the inputs and of every parameter equal the reference ones."""
     reference_inputs = inputs.to(torch.float32)
     head_inputs = inputs.to(dtype)
-    expected = reference(
+    reference_output = reference(
         reference_inputs.noisy_latents,
         reference_inputs.hidden_states,
         reference_inputs.scalar_conditions,
     )
-    actual = head(
+    head_output = head(
         head_inputs.noisy_latents, head_inputs.hidden_states, head_inputs.scalar_conditions
     )
-    grad_output = torch.randn_like(expected)
-    expected.backward(grad_output)
-    actual.backward(grad_output.to(dtype))
+    grad_output = torch.randn_like(reference_output)
+    reference_output.backward(grad_output)
+    head_output.backward(grad_output.to(dtype))
 
     errors = {
         "noisy latents": calc_relative_error(
