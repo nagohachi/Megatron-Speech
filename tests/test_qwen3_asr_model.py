@@ -15,6 +15,7 @@ from megatron.core.distributed import (
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import gather_from_tensor_model_parallel_region
 from transformers import (
+    AutoProcessor,
     Qwen3ASRConfig,
     Qwen3ASRForConditionalGeneration,
 )
@@ -28,7 +29,7 @@ from megatron_speech.conversion.bridge import MappingBridge
 from megatron_speech.conversion.qwen3_asr import build_qwen3_asr_mappings
 from megatron_speech.data.qwen3_asr import Qwen3ASRExampleBuilder, SpeechExample
 from megatron_speech.models.speech_llm import AUDIO_MODALITY, ENCODER_NAME, build_speech_llm
-from tests.hf_audio_inputs import HF_MODEL, PROCESSOR, TRANSCRIPT, WAVEFORM_LENGTHS
+from tests.hf_audio_inputs import HF_MODEL, TRANSCRIPT, WAVEFORM_LENGTHS
 from tests.numerical_error import calc_norm_relative_error, calc_relative_error
 from tests.qwen3_asr_config import build_speech_llm_config
 
@@ -40,6 +41,7 @@ pytestmark = [
 logger = logging.getLogger(__name__)
 
 BRIDGE = MappingBridge(build_qwen3_asr_mappings())
+PROCESSOR = AutoProcessor.from_pretrained(HF_MODEL)
 # 10 s of audio has 130 encoder frames, which the encoder attends in two windows.
 UTTERANCE_LENGTHS = {**WAVEFORM_LENGTHS, "longer-than-a-window": 160000}
 # Limits of ``calc_errors``. Largest measured: fp32 logits 6.4e-5, gradients 1.1e-3; bf16

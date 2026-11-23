@@ -1,11 +1,12 @@
 import numpy as np
 import pytest
 import torch
+from transformers import AutoProcessor
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
 from megatron_speech.data.qwen3_asr import Qwen3ASRExampleBuilder, SpeechExample
-from tests.hf_audio_inputs import PROCESSOR, TRANSCRIPT, WAVEFORM_LENGTHS
+from tests.hf_audio_inputs import HF_MODEL, TRANSCRIPT, WAVEFORM_LENGTHS
 
 # Each length of the audio, with or without the language forced in the prompt.
 pytestmark = [
@@ -18,6 +19,7 @@ pytestmark = [
 WITH_TRANSCRIPTS = pytest.mark.parametrize(
     "transcript", [TRANSCRIPT, ""], ids=["transcript", "empty"]
 )
+PROCESSOR = AutoProcessor.from_pretrained(HF_MODEL)
 
 
 @pytest.fixture(name="waveform")
