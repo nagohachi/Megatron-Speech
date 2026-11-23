@@ -377,6 +377,24 @@ def test_accepts_zero_positions(new_head: AdaLNMLPHead) -> None:
     assert output.shape == (0, NUM_SAMPLES, BASE_CONFIG.latent_size)
 
 
+@WITH_DTYPES
+@WITH_HEAD_CONFIGS
+def test_zero_positions_give_zero_gradients(
+    head: AdaLNMLPHead, inputs: HeadInputs, dtype: torch.dtype
+) -> None:
+    """Check that no positions, which a batch without audio gives, pass backward with zeros."""
+    head_inputs = inputs.to(dtype)
+    output = head(
+        head_inputs.noisy_latents[:0],
+        head_inputs.hidden_states[:0],
+        {name: values[:0] for name, values in head_inputs.scalar_conditions.items()},
+    )
+    output.sum().backward()
+    for name, parameter in head.named_parameters():
+        assert parameter.grad is not None, name
+        assert torch.equal(parameter.grad, torch.zeros_like(parameter.grad)), name
+
+
 def test_rejects_scalar_conditions_of_other_names(new_head: AdaLNMLPHead) -> None:
     """Check that scalar conditions other than the configured ones raise ValueError."""
     with pytest.raises(ValueError, match="scalar_conditions has"):
