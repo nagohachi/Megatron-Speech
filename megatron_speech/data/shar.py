@@ -27,7 +27,8 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(f"--num-jobs must be at least 1, got {args.num_jobs}")
     logging.basicConfig(level=logging.INFO)
 
-    for part, cuts in RECIPES[args.recipe](args.corpus_dir, args.parts, args.num_jobs).items():
+    recipe = RECIPES[args.recipe]()
+    for part, cuts in recipe.build_cuts(args.corpus_dir, args.parts, args.num_jobs).items():
         part_dir = args.output_dir / part
         part_dir.mkdir(parents=True, exist_ok=True)
         # Recipes may list the utterances grouped by speaker; shuffle so that each shard mixes them.

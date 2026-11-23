@@ -15,4 +15,4 @@ part は、コーパスを学習用や評価用などに分けた部分で、名
 
 ## recipe
 
-recipe は `megatron_speech/data/recipes/` にあり、`RECIPES` が名前で引く。コーパスのディレクトリの形と part の名前は、各 recipe の関数の docstring にある。コーパスを加えるときは、part ごとの `CutSet` を返す関数を module にして、`RECIPES` に登録する。
+recipe は、抽象 base class `CorpusRecipe`（`megatron_speech/data/recipes/base.py`）を継承した class である。part ごとの `CutSet` は、recipe の `build_cuts` で作る。recipe は `megatron_speech/data/recipes/` に置き、`RECIPES` が名前で引く。コーパスのディレクトリの形と part の名前は、各 recipe の `build_cuts` の docstring に書く。コーパスを加えるときは、`CorpusRecipe` を継承した class を module に書き、`RECIPES` に登録する。
