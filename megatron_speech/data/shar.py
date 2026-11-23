@@ -20,7 +20,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--shard-size", type=int, default=1000, help="utterances per shard")
     parser.add_argument("--seed", type=int, default=0, help="seed of the shuffle before sharding")
     parser.add_argument(
-        "--num-jobs", type=int, default=4, help="number of processes for writing the shards"
+        "--num-jobs",
+        type=int,
+        default=4,
+        help="number of parallel jobs for reading the corpus and writing the shards",
     )
     args = parser.parse_args(argv)
     if args.shard_size < 1:
