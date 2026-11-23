@@ -83,24 +83,41 @@ def test_batches_hold_one_bucket(sampler: DynamicBucketingSampler) -> None:
         assert len(buckets) == 1
 
 
-def test_ranks_take_equal_steps_of_different_utterances(cuts: CutSet) -> None:
-    """Check that data parallel ranks take as many steps, of different utterances, as one rank.
-
-    Every rank has to run the same number of steps; together they cover the fitting utterances.
-    """
-    samplers = [
-        build_token_bucketing_sampler(cuts, calc_num_cut_tokens, CONFIG, rank=rank, world_size=2)
+@pytest.fixture(name="batches_of_ranks")
+def build_batches_of_ranks(cuts: CutSet) -> list[list[CutSet]]:
+    """Sample one epoch on each of two data parallel ranks; return the micro-batches by rank."""
+    return [
+        list(
+            build_token_bucketing_sampler(
+                cuts, calc_num_cut_tokens, CONFIG, rank=rank, world_size=2
+            )
+        )
         for rank in range(2)
     ]
-    batches_rank0, batches_rank1 = (list(sampler) for sampler in samplers)
-    assert len(batches_rank0) == len(batches_rank1)
-    ids_rank0 = [cut.id for batch in batches_rank0 for cut in batch]
-    ids_rank1 = [cut.id for batch in batches_rank1 for cut in batch]
+
+
+def test_ranks_take_equal_numbers_of_steps(batches_of_ranks: list[list[CutSet]]) -> None:
+    """Check that both data parallel ranks have the same number of micro-batches."""
+    assert len(batches_of_ranks[0]) == len(batches_of_ranks[1])
+
+
+def test_ranks_take_different_utterances(batches_of_ranks: list[list[CutSet]]) -> None:
+    """Check that no utterance is taken by both data parallel ranks."""
+    ids_rank0, ids_rank1 = (
+        {cut.id for batch in batches for cut in batch} for batches in batches_of_ranks
+    )
+    assert not ids_rank0 & ids_rank1
+
+
+def test_ranks_take_every_fitting_utterance(
+    batches_of_ranks: list[list[CutSet]], cuts: CutSet
+) -> None:
+    """Check that the data parallel ranks together take every utterance within the limit."""
+    sampled_ids = [cut.id for batches in batches_of_ranks for batch in batches for cut in batch]
     fitting_ids = [
         cut.id for cut in cuts if calc_num_cut_tokens(cut) <= CONFIG.max_tokens_per_example
     ]
-    assert not set(ids_rank0) & set(ids_rank1)
-    assert sorted(ids_rank0 + ids_rank1) == sorted(fitting_ids)
+    assert sorted(sampled_ids) == sorted(fitting_ids)
 
 
 def test_constraint_closes_batch_before_limit_can_be_passed() -> None:
