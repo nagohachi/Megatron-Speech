@@ -65,6 +65,7 @@ class TokenBucketingConfig:
     num_buckets: int = 10
     # The bucket bounds are estimated from this many cuts at the start of the cuts.
     num_cuts_for_bins_estimate: int = 10000
+    shuffle: bool = True
     seed: int = 0
 
     def __post_init__(self) -> None:
@@ -85,7 +86,7 @@ def build_token_bucketing_sampler(
     rank: int,
     world_size: int,
 ) -> DynamicBucketingSampler:
-    """Build a sampler of shuffled micro-batches of utterances of similar token counts.
+    """Build a sampler of micro-batches of utterances of similar token counts.
 
     A micro-batch has at most ``config.max_tokens_per_batch`` tokens, counted with
     ``calc_num_tokens``. ``rank`` and ``world_size`` are those of data parallelism: every rank
@@ -109,7 +110,7 @@ def build_token_bucketing_sampler(
             constraint, bucket_max_tokens=[*bucket_bounds, config.max_tokens_per_example]
         ),
         duration_bins=bucket_bounds,
-        shuffle=True,
+        shuffle=config.shuffle,
         seed=config.seed,
         rank=rank,
         world_size=world_size,
