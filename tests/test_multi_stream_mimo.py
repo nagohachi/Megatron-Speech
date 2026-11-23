@@ -35,6 +35,7 @@ MODALITY_POSITIONS = {
     "second_stream": [1, 2, 7, 8, 11],
 }
 STREAM_NAMES = [name for name in MODALITY_POSITIONS if name != "text"]
+NUM_FIRST_STREAM_POSITIONS = len(MODALITY_POSITIONS["first_stream"])
 EMPTY_POSITIONS = sorted(set(range(sum(SEQUENCE_LENGTHS))).difference(*MODALITY_POSITIONS.values()))
 WORD_EMBEDDINGS = "language_model.embedding.word_embeddings.weight"
 
@@ -312,15 +313,14 @@ def test_rejects_positions_of_other_modalities(model: MultiStreamMimoModel, batc
         calc_mimo_loss(model, replace(batch, modality_token_indices=modality_token_indices))
 
 
-# Fewer and more inputs than the 7 positions of the first stream.
-@pytest.mark.parametrize("num_inputs", [1, 8])
+# Fewer and more inputs than the positions of the first stream.
+@pytest.mark.parametrize("num_inputs", [1, NUM_FIRST_STREAM_POSITIONS + 1])
 def test_rejects_positions_of_another_count(
     model: MultiStreamMimoModel, batch: Batch, num_inputs: int
 ) -> None:
     """Check that a stream with another number of inputs than positions raises ValueError."""
     stream_inputs = dict(batch.stream_inputs)
     stream_inputs["first_stream"] = stream_inputs["first_stream"].repeat(2, 1)[:num_inputs]
-    with pytest.raises(
-        ValueError, match=f"first_stream has {num_inputs} embeddings but 7 positions"
-    ):
+    message = f"first_stream has {num_inputs} embeddings but {NUM_FIRST_STREAM_POSITIONS} positions"
+    with pytest.raises(ValueError, match=message):
         calc_mimo_loss(model, replace(batch, stream_inputs=stream_inputs))
