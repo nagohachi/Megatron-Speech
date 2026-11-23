@@ -309,9 +309,15 @@ def test_rejects_positions_of_other_modalities(model: MultiStreamMimoModel, batc
         calc_mimo_loss(model, replace(batch, modality_token_indices=modality_token_indices))
 
 
-def test_rejects_positions_of_another_count(model: MultiStreamMimoModel, batch: Batch) -> None:
-    """Check that a stream with more inputs than positions raises ValueError."""
+# Fewer and more inputs than the 7 positions of the first stream.
+@pytest.mark.parametrize("num_inputs", [1, 8])
+def test_rejects_positions_of_another_count(
+    model: MultiStreamMimoModel, batch: Batch, num_inputs: int
+) -> None:
+    """Check that a stream with another number of inputs than positions raises ValueError."""
     stream_inputs = dict(batch.stream_inputs)
-    stream_inputs["first_stream"] = stream_inputs["first_stream"][:1]
-    with pytest.raises(ValueError, match="first_stream has 1 embeddings but 7 positions"):
+    stream_inputs["first_stream"] = stream_inputs["first_stream"].repeat(2, 1)[:num_inputs]
+    with pytest.raises(
+        ValueError, match=f"first_stream has {num_inputs} embeddings but 7 positions"
+    ):
         calc_mimo_loss(model, replace(batch, stream_inputs=stream_inputs))
