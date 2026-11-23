@@ -6,6 +6,8 @@
 apptainer/run.sh python -m megatron_speech.data.shar <recipe> <コーパスのディレクトリ> <出力先> --parts <part>...
 ```
 
+part は、コーパスを学習用や評価用などに分けた部分で、名前はコーパスの配布元が付けたもの（LibriSpeech の `train-clean-100`、`dev-clean` など）を使う。
+
 ## 出力の形
 
 - part ごとに `<出力先>/<part>/` ができ、`cuts.NNNNNN.jsonl.gz`（cut の一覧と書き起こし）と `recording.NNNNNN.tar`（FLAC の音声）が同じ番号で対になる。
