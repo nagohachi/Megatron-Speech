@@ -158,7 +158,7 @@ def calc_mimo_loss(model: MultiStreamMimoModel, batch: Batch) -> torch.Tensor:
     return loss
 
 
-def calc_reference_llm_input(model: MultiStreamMimoModel, batch: Batch) -> torch.Tensor:
+def sum_reference_llm_input(model: MultiStreamMimoModel, batch: Batch) -> torch.Tensor:
     """Sum the word embeddings and the projected streams at their positions.
 
     The input is ``[num_positions, 1, hidden]``. The word embedding counts at the text positions
@@ -184,7 +184,7 @@ def run_reference(model: MultiStreamMimoModel, batch: Batch) -> torch.Tensor:
         None,
         batch.position_ids,
         None,
-        decoder_input=calc_reference_llm_input(model, batch),
+        decoder_input=sum_reference_llm_input(model, batch),
         labels=batch.labels,
         loss_mask=batch.loss_mask,
         packed_seq_params=PackedSeqParams(
@@ -227,7 +227,7 @@ def test_llm_input_matches_reference(
 ) -> None:
     """Check that the LLM's input sums the text and stream embeddings at their positions."""
     with torch.no_grad():
-        reference_llm_input = calc_reference_llm_input(model, batch)
+        reference_llm_input = sum_reference_llm_input(model, batch)
     assert model_llm_input.shape == reference_llm_input.shape
     error = calc_relative_error(model_llm_input, reference_llm_input)
     logger.info("%s: LLM input max relative error %.2e", dtype, error)
