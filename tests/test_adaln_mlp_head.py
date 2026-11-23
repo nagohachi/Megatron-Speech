@@ -351,10 +351,15 @@ def test_gradients_match_torch(
     assert error < GRADIENT_TOLERANCES[dtype], errors
 
 
-def test_new_head_outputs_zeros(tensor_parallel_size: int) -> None:
+@pytest.fixture(name="new_head")
+def build_new_head(tensor_parallel_size: int) -> AdaLNMLPHead:
+    """Build an fp32 head of ``BASE_CONFIG`` with its initial weights."""
+    return AdaLNMLPHead(BASE_CONFIG, build_llm_config(tensor_parallel_size, torch.float32)).cuda()
+
+
+def test_new_head_outputs_zeros(new_head: AdaLNMLPHead) -> None:
     """Check that a new head outputs zeros, as the zero-initialized output projection gives."""
-    head = AdaLNMLPHead(BASE_CONFIG, build_llm_config(tensor_parallel_size, torch.float32)).cuda()
-    output = head(
+    output = new_head(
         torch.randn(NUM_POSITIONS, NUM_SAMPLES, BASE_CONFIG.latent_size, device="cuda"),
         torch.randn(NUM_POSITIONS, LLM_HIDDEN_SIZE, device="cuda"),
         {"time": torch.rand(NUM_POSITIONS, NUM_SAMPLES, device="cuda")},
@@ -362,10 +367,9 @@ def test_new_head_outputs_zeros(tensor_parallel_size: int) -> None:
     assert torch.equal(output, torch.zeros_like(output))
 
 
-def test_accepts_zero_positions(tensor_parallel_size: int) -> None:
+def test_accepts_zero_positions(new_head: AdaLNMLPHead) -> None:
     """Check that the head accepts no positions, which a batch without audio gives."""
-    head = AdaLNMLPHead(BASE_CONFIG, build_llm_config(tensor_parallel_size, torch.float32)).cuda()
-    output = head(
+    output = new_head(
         torch.zeros(0, NUM_SAMPLES, BASE_CONFIG.latent_size, device="cuda"),
         torch.zeros(0, LLM_HIDDEN_SIZE, device="cuda"),
         {"time": torch.zeros(0, NUM_SAMPLES, device="cuda")},
@@ -373,11 +377,10 @@ def test_accepts_zero_positions(tensor_parallel_size: int) -> None:
     assert output.shape == (0, NUM_SAMPLES, BASE_CONFIG.latent_size)
 
 
-def test_rejects_scalar_conditions_of_other_names(tensor_parallel_size: int) -> None:
+def test_rejects_scalar_conditions_of_other_names(new_head: AdaLNMLPHead) -> None:
     """Check that scalar conditions other than the configured ones raise ValueError."""
-    head = AdaLNMLPHead(BASE_CONFIG, build_llm_config(tensor_parallel_size, torch.float32)).cuda()
     with pytest.raises(ValueError, match="scalar_conditions has"):
-        head(
+        new_head(
             torch.zeros(NUM_POSITIONS, NUM_SAMPLES, BASE_CONFIG.latent_size, device="cuda"),
             torch.zeros(NUM_POSITIONS, LLM_HIDDEN_SIZE, device="cuda"),
             {"guidance": torch.zeros(NUM_POSITIONS, NUM_SAMPLES, device="cuda")},
