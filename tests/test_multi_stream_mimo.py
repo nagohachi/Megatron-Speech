@@ -184,7 +184,7 @@ def sum_reference_llm_input(model: MultiStreamMimoModel, batch: Batch) -> torch.
 
 
 def run_reference(model: MultiStreamMimoModel, batch: Batch) -> torch.Tensor:
-    """Run the projectors, sum the embeddings by hand, then run the LLM."""
+    """Sum the embeddings by hand from the parameters, then run the LLM."""
     return model.language_model(
         None,
         batch.position_ids,
