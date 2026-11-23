@@ -199,7 +199,7 @@ def run_reference(model: MultiStreamMimoModel, batch: Batch) -> torch.Tensor:
 @pytest.fixture(name="model_llm_input")
 def calc_model_llm_input(model: MultiStreamMimoModel, batch: Batch) -> torch.Tensor:
     """Calculate the embeddings that the model under test passes to the LLM."""
-    captured = {}
+    captured: dict[str, torch.Tensor] = {}
 
     def save_llm_input(
         module: torch.nn.Module,
