@@ -28,13 +28,14 @@ STREAM_INPUT_SIZE = 16
 ENCODER_NAME = "encoder"
 # Two sequences packed in one row, of 9 and 6 positions.
 SEQUENCE_LENGTHS = [9, 6]
-# Positions of each modality in the row. Positions 2 and 8 hold all three; position 5 holds none.
+# Positions of each modality in the row. Some positions hold all three, and some none.
 MODALITY_POSITIONS = {
     "text": [0, 1, 2, 3, 6, 7, 8, 9, 10, 12, 13],
     "first_stream": [2, 4, 6, 8, 10, 12, 14],
     "second_stream": [1, 2, 7, 8, 11],
 }
 STREAM_NAMES = [name for name in MODALITY_POSITIONS if name != "text"]
+EMPTY_POSITIONS = sorted(set(range(sum(SEQUENCE_LENGTHS))).difference(*MODALITY_POSITIONS.values()))
 WORD_EMBEDDINGS = "language_model.embedding.word_embeddings.weight"
 
 
@@ -233,9 +234,11 @@ def test_llm_input_matches_reference(
     assert error < TOLERANCES[dtype]
 
 
-def test_position_without_modality_gets_zeros(model_llm_input: torch.Tensor) -> None:
-    """Check that position 5, which no modality holds, gets a zero embedding."""
-    assert torch.equal(model_llm_input[5], torch.zeros_like(model_llm_input[5]))
+def test_positions_without_modality_get_zeros(model_llm_input: torch.Tensor) -> None:
+    """Check that the positions that no modality holds get zero embeddings."""
+    empty_position_inputs = model_llm_input[EMPTY_POSITIONS]
+    assert empty_position_inputs.numel() > 0
+    assert torch.equal(empty_position_inputs, torch.zeros_like(empty_position_inputs))
 
 
 def test_loss_matches_reference(
