@@ -89,9 +89,8 @@ def build_token_bucketing_sampler(
     """Build a sampler of micro-batches of utterances of similar token counts.
 
     A micro-batch has at most ``config.max_tokens_per_batch`` tokens, counted with
-    ``calc_num_tokens``. ``rank`` and ``world_size`` are those of data parallelism: every rank
-    gets as many micro-batches, and lhotse tries to take those of one step from the same bucket
-    (``sync_buckets``).
+    ``calc_num_tokens``. ``rank`` and ``world_size`` are those of data parallelism; every rank
+    gets as many micro-batches.
     """
     constraint = PackedTokenConstraint(
         config.max_tokens_per_batch, calc_num_tokens, [config.max_tokens_per_example]
