@@ -69,7 +69,7 @@ class TokenBucketingConfig:
     seed: int = 0
 
     def __post_init__(self) -> None:
-        """Check that the limits leave room for one example and that there are buckets."""
+        """Check that the limits leave room for one example and that buckets can be estimated."""
         if not 0 < self.max_tokens_per_example <= self.max_tokens_per_batch:
             raise ValueError(
                 f"max_tokens_per_example ({self.max_tokens_per_example}) must be positive and "
@@ -77,6 +77,11 @@ class TokenBucketingConfig:
             )
         if self.num_buckets < 2:
             raise ValueError(f"num_buckets must be at least 2, got {self.num_buckets}")
+        if self.num_cuts_for_bins_estimate < self.num_buckets:
+            raise ValueError(
+                f"num_cuts_for_bins_estimate ({self.num_cuts_for_bins_estimate}) must be at "
+                f"least num_buckets ({self.num_buckets})"
+            )
 
 
 def build_token_bucketing_sampler(

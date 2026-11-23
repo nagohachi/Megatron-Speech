@@ -146,10 +146,15 @@ def test_constraint_closes_batch_before_limit_can_be_passed() -> None:
 
 @pytest.mark.parametrize(
     ("setting", "value"),
-    [("max_tokens_per_example", 1001), ("max_tokens_per_example", 0), ("num_buckets", 1)],
+    [
+        ("max_tokens_per_example", 1001),
+        ("max_tokens_per_example", 0),
+        ("num_buckets", 1),
+        ("num_cuts_for_bins_estimate", 9),
+    ],
 )
 def test_config_rejects_impossible_settings(setting: str, value: int) -> None:
-    """Check that the config names the setting that leaves no room for an example or bucket."""
+    """Check that the config names the setting that makes the limits or the buckets impossible."""
     settings = {"max_tokens_per_batch": 1000, "max_tokens_per_example": 300, setting: value}
     with pytest.raises(ValueError, match=setting):
         TokenBucketingConfig(**settings)
