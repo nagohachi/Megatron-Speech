@@ -258,32 +258,16 @@ def collect_gradients(model: MultiStreamMimoModel) -> dict[str, torch.Tensor | N
     }
 
 
-@pytest.fixture(name="model_gradients")
-def calc_model_gradients(
-    model: MultiStreamMimoModel, batch: Batch
-) -> dict[str, torch.Tensor | None]:
-    """Calculate the gradients of the summed loss through the model under test."""
-    model.zero_grad(set_to_none=True)
-    calc_mimo_loss(model, batch).sum().backward()
-    return collect_gradients(model)
-
-
-@pytest.fixture(name="reference_gradients")
-def calc_reference_gradients(
-    model: MultiStreamMimoModel, batch: Batch
-) -> dict[str, torch.Tensor | None]:
-    """Calculate the gradients of the same loss through the reference."""
-    model.zero_grad(set_to_none=True)
-    run_reference(model, batch).sum().backward()
-    return collect_gradients(model)
-
-
 def test_gradients_match_reference(
-    model_gradients: dict[str, torch.Tensor | None],
-    reference_gradients: dict[str, torch.Tensor | None],
-    dtype: torch.dtype,
+    model: MultiStreamMimoModel, batch: Batch, dtype: torch.dtype
 ) -> None:
     """Check that the gradients of every parameter, the projectors' included, match."""
+    model.zero_grad(set_to_none=True)
+    calc_mimo_loss(model, batch).sum().backward()
+    model_gradients = collect_gradients(model)
+    model.zero_grad(set_to_none=True)
+    run_reference(model, batch).sum().backward()
+    reference_gradients = collect_gradients(model)
     errors = {
         name: calc_relative_error(grad, reference_gradients[name])
         for name, grad in model_gradients.items()
