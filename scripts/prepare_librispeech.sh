@@ -1,12 +1,5 @@
 #!/bin/bash
-# Convert parts of LibriSpeech into lhotse Shar shards with FLAC audio.
-#
-#   apptainer/run.sh bash scripts/prepare_librispeech.sh <LibriSpeech dir> <output dir> <part>...
-#
-# <LibriSpeech dir> holds the parts as OpenSLR distributes them, such as train-clean-100 and
-# dev-clean. The shards of each part go into <output dir>/<part>, and the lhotse manifests that
-# list the audio files and transcripts into <output dir>/manifests. NUM_JOBS (default 4) is the
-# number of processes.
+# Convert the given parts of LibriSpeech into lhotse Shar shards with FLAC audio.
 set -euo pipefail
 
 corpus_dir=$1
