@@ -50,8 +50,8 @@ patches/                    Megatron-LM へのパッチ（現在は空）
 apptainer/                  コンテナの起動スクリプトと venv の構築
 megatron_speech/
   components/               音声 LLM の component（encoder、projector）
+  data/                     学習の入力を作る処理（コーパスの recipe、Shar の書き出しなど）
   training/                 学習の entry point、設定ファイルの読み込み、recipe
-scripts/                    データの準備のスクリプト
 tests/                      テスト
 configs/                    設定ファイルの例
 docs/                       文書
