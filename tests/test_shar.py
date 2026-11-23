@@ -90,8 +90,8 @@ def test_shards_hold_original_audio(shar_dir: Path, corpus_dir: Path) -> None:
         np.testing.assert_array_equal(cut.load_audio()[0], waveform)
 
 
-def test_seed_decides_utterance_order(corpus_dir: Path, tmp_path: Path) -> None:
-    """Check that the same seed gives the same order of utterances, and another seed another."""
+def test_utterance_order_depends_on_seed(corpus_dir: Path, tmp_path: Path) -> None:
+    """Check that the utterance order is the same with the same seed and differs with another."""
     utterance_ids_seed0 = read_utterance_ids(write_shar(corpus_dir, tmp_path / "seed0", 0))
     utterance_ids_seed0_rerun = read_utterance_ids(
         write_shar(corpus_dir, tmp_path / "seed0-rerun", 0)
@@ -114,7 +114,7 @@ def test_shards_hold_shard_size_utterances(shar_dir: Path) -> None:
 def test_rejects_counts_below_one(
     option: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Check that a count below 1 stops the writer, with a message that names the option."""
+    """Check that the writer is stopped with an error naming the option for a count below 1."""
     with pytest.raises(SystemExit):
         main(
             [

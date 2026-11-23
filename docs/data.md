@@ -10,8 +10,8 @@ part は、コーパスを学習用や評価用などに分けた部分で、名
 
 ## 出力の形
 
-- part ごとに `<出力先>/<part>/` ができ、`cuts.NNNNNN.jsonl.gz`（cut の一覧と書き起こし）と `recording.NNNNNN.tar`（FLAC の音声）が同じ番号で対になる。
-- 1 つの shard は `--shard-size` 個（既定 1000）の発話を持つ。発話は `--seed` で shuffle してから shard に分ける。
+- 出力先には part ごとのディレクトリ `<出力先>/<part>/` を作り、その中に `cuts.NNNNNN.jsonl.gz`（cut の一覧と書き起こし）と `recording.NNNNNN.tar`（FLAC の音声）を同じ番号の対で置く。
+- 1 つの shard には、`--shard-size` 個（既定 1000）の発話を入れる。発話は `--seed` で shuffle してから shard に分ける。
 
 ## recipe
 

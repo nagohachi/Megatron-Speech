@@ -5,7 +5,7 @@ from lhotse import CutSet
 
 
 class CorpusRecipe(ABC):
-    """Base class of the corpus recipes; a subclass reads one corpus as lhotse cuts."""
+    """Base class of the corpus recipes; one subclass is written for each corpus."""
 
     @abstractmethod
     def build_cuts(self, corpus_dir: Path, parts: list[str], num_jobs: int) -> dict[str, CutSet]:
