@@ -245,13 +245,13 @@ class AdaLNMLPHead(MegatronModule):
             features = torch.cat([torch.cos(phases), torch.sin(phases)], dim=-1)
             condition = condition + embedding(features.to(dtype))[0]
         condition = torch.nn.functional.silu(condition)
-        hidden = gather_from_tensor_model_parallel_region(
+        residual_states = gather_from_tensor_model_parallel_region(
             self.latent_projection(noisy_latents.to(dtype))[0]
         )
         for layer in self.layers:
-            hidden = layer(hidden, condition)
+            residual_states = layer(residual_states, condition)
         modulation = gather_from_tensor_model_parallel_region(self.final_modulation(condition)[0])
         shift, scale = modulation.chunk(2, dim=-1)
-        normalized_hidden = _normalize_by_rms(hidden, self.head_config.norm_eps)
-        output = self.output_projection(normalized_hidden * (1 + scale) + shift)[0]
+        normalized_states = _normalize_by_rms(residual_states, self.head_config.norm_eps)
+        output = self.output_projection(normalized_states * (1 + scale) + shift)[0]
         return gather_from_tensor_model_parallel_region(output)

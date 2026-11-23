@@ -152,14 +152,14 @@ class ReferenceHead(torch.nn.Module):
             phases = scalar_conditions[name].unsqueeze(-1) * frequencies
             condition = condition + embedding(torch.cat([phases.cos(), phases.sin()], dim=-1))
         condition = torch.nn.functional.silu(condition)
-        hidden = self.latent_projection(noisy_latents)
+        residual_states = self.latent_projection(noisy_latents)
         for layer in self.layers:
-            hidden = layer(hidden, condition)
+            residual_states = layer(residual_states, condition)
         shift, scale = self.final_modulation(condition).chunk(2, dim=-1)
-        normalized_hidden = torch.nn.functional.rms_norm(
-            hidden, (hidden.shape[-1],), eps=self.head_config.norm_eps
+        normalized_states = torch.nn.functional.rms_norm(
+            residual_states, (residual_states.shape[-1],), eps=self.head_config.norm_eps
         )
-        return self.output_projection(normalized_hidden * (1 + scale) + shift)
+        return self.output_projection(normalized_states * (1 + scale) + shift)
 
 
 def take_reference_shards(
