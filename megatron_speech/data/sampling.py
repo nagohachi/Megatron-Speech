@@ -96,14 +96,19 @@ def build_token_bucketing_sampler(
         config.max_tokens_per_batch, calc_num_tokens, [config.max_tokens_per_example]
     )
     cuts = cuts.filter(constraint.fits)
-    bins = estimate_duration_buckets(
-        cuts.subset(first=config.num_cuts_for_bins_estimate), config.num_buckets, constraint
-    )
-    bins = [int(bound) for bound in bins]
+    # The largest token count of each bucket but the last.
+    bucket_bounds = [
+        int(bound)
+        for bound in estimate_duration_buckets(
+            cuts.subset(first=config.num_cuts_for_bins_estimate), config.num_buckets, constraint
+        )
+    ]
     return DynamicBucketingSampler(
         cuts,
-        constraint=replace(constraint, bucket_max_tokens=[*bins, config.max_tokens_per_example]),
-        duration_bins=bins,
+        constraint=replace(
+            constraint, bucket_max_tokens=[*bucket_bounds, config.max_tokens_per_example]
+        ),
+        duration_bins=bucket_bounds,
         shuffle=True,
         seed=config.seed,
         rank=rank,
