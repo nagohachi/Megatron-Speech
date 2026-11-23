@@ -35,10 +35,8 @@ def build_corpus(tmp_path: Path) -> Path:
     return corpus_dir
 
 
-@pytest.fixture(name="shar_dir")
-def build_shar(corpus_dir: Path, tmp_path: Path) -> Path:
+def write_shar(corpus_dir: Path, output_dir: Path, seed: int) -> Path:
     """Write the corpus as Shar shards with the LibriSpeech recipe; return the part's directory."""
-    output_dir = tmp_path / "shar"
     main(
         [
             "librispeech",
@@ -48,6 +46,8 @@ def build_shar(corpus_dir: Path, tmp_path: Path) -> Path:
             "dev-clean",
             "--shard-size",
             str(SHARD_SIZE),
+            "--seed",
+            str(seed),
             "--num-jobs",
             "1",
         ]
@@ -55,16 +55,49 @@ def build_shar(corpus_dir: Path, tmp_path: Path) -> Path:
     return output_dir / "dev-clean"
 
 
-def test_shards_hold_every_utterance(shar_dir: Path, corpus_dir: Path) -> None:
-    """Check that the shards hold each utterance once, with its transcript and its audio."""
-    cuts = list(CutSet.from_shar(in_dir=shar_dir))
-    assert sorted(cut.recording_id for cut in cuts) == sorted(TRANSCRIPTS)
-    for cut in cuts:
+def read_utterance_ids(shar_dir: Path) -> list[str]:
+    """Read the ids of the utterances in the shards, in the order that the shards hold them."""
+    return [
+        cut.recording_id
+        for path in sorted(shar_dir.glob("cuts.*.jsonl.gz"))
+        for cut in CutSet.from_file(path)
+    ]
+
+
+@pytest.fixture(name="shar_dir")
+def build_shar(corpus_dir: Path, tmp_path: Path) -> Path:
+    """Write the corpus as Shar shards with seed 0."""
+    return write_shar(corpus_dir, tmp_path / "shar", 0)
+
+
+def test_shards_hold_every_utterance_once(shar_dir: Path) -> None:
+    """Check that the shards hold each utterance of the corpus once."""
+    assert sorted(read_utterance_ids(shar_dir)) == sorted(TRANSCRIPTS)
+
+
+def test_shards_hold_transcripts(shar_dir: Path) -> None:
+    """Check that each utterance in the shards has its transcript."""
+    for cut in CutSet.from_shar(in_dir=shar_dir):
         assert cut.supervisions[0].text == TRANSCRIPTS[cut.recording_id]
+
+
+def test_shards_hold_original_audio(shar_dir: Path, corpus_dir: Path) -> None:
+    """Check that each utterance in the shards has the samples of its FLAC file."""
+    for cut in CutSet.from_shar(in_dir=shar_dir):
         speaker, chapter, _ = cut.recording_id.split("-")
         flac_path = corpus_dir / "dev-clean" / speaker / chapter / f"{cut.recording_id}.flac"
         waveform, _ = sf.read(flac_path, dtype="float32")
         np.testing.assert_array_equal(cut.load_audio()[0], waveform)
+
+
+def test_seed_decides_utterance_order(corpus_dir: Path, tmp_path: Path) -> None:
+    """Check that the same seed gives the same order of utterances, and another seed another."""
+    first, again, other_seed = (
+        read_utterance_ids(write_shar(corpus_dir, tmp_path / name, seed))
+        for name, seed in [("first", 0), ("again", 0), ("other-seed", 1)]
+    )
+    assert again == first
+    assert other_seed != first
 
 
 def test_shards_hold_shard_size_utterances(shar_dir: Path) -> None:
