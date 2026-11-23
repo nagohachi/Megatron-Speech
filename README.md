@@ -27,12 +27,7 @@ CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh python -m torch.distributed.run --npro
 
 ## データの準備
 
-LibriSpeech を lhotse Shar の形式に変換する。最初の引数は、OpenSLR が配布する part（`train-clean-100`、`dev-clean` など）を置いたディレクトリである。
-
-```bash
-apptainer/run.sh bash scripts/prepare_librispeech.sh <LibriSpeech のディレクトリ> data/librispeech/shar \
-    train-clean-100 dev-clean test-clean
-```
+学習のデータを lhotse Shar の形式で用意する手順は [docs/data.md](docs/data.md) にある。
 
 ## テスト
 
