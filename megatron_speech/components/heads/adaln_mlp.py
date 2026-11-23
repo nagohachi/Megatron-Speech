@@ -181,6 +181,8 @@ class AdaLNMLPHead(MegatronModule):
         self.condition_projection = _build_column_parallel_linear(
             config, llm_config.hidden_size, hidden_size, config.init_method, tp_group
         )
+        # SiLU between two layers of hidden_size features, as the scalar embeddings of Haru-4B's
+        # head and DiT's timestep embedding.
         scalar_embedding_config = replace(
             config,
             ffn_hidden_size=hidden_size,
