@@ -40,7 +40,7 @@ def build_cut(index: int, num_tokens: int) -> Cut:
     return cut
 
 
-def count_cut_tokens(cut: Cut) -> int:
+def calc_num_cut_tokens(cut: Cut) -> int:
     """Count the tokens of ``cut`` from its number of samples."""
     return cut.num_samples // SAMPLES_PER_TOKEN
 
@@ -56,13 +56,13 @@ def build_cuts() -> CutSet:
 @pytest.fixture(name="sampler")
 def build_sampler(cuts: CutSet) -> DynamicBucketingSampler:
     """Build the sampler of the cuts on the only rank."""
-    return build_token_bucketing_sampler(cuts, count_cut_tokens, CONFIG, rank=0, world_size=1)
+    return build_token_bucketing_sampler(cuts, calc_num_cut_tokens, CONFIG, rank=0, world_size=1)
 
 
 def test_batches_stay_within_token_limit(sampler: DynamicBucketingSampler) -> None:
     """Check that no micro-batch of an epoch has more than ``max_tokens_per_batch`` tokens."""
     for batch in sampler:
-        assert sum(count_cut_tokens(cut) for cut in batch) <= CONFIG.max_tokens_per_batch
+        assert sum(calc_num_cut_tokens(cut) for cut in batch) <= CONFIG.max_tokens_per_batch
 
 
 def test_batches_hold_each_fitting_utterance_once(
@@ -71,7 +71,7 @@ def test_batches_hold_each_fitting_utterance_once(
     """Check that an epoch holds every utterance within the example limit once, and no other."""
     sampled_ids = sorted(cut.id for batch in sampler for cut in batch)
     fitting_ids = sorted(
-        cut.id for cut in cuts if count_cut_tokens(cut) <= CONFIG.max_tokens_per_example
+        cut.id for cut in cuts if calc_num_cut_tokens(cut) <= CONFIG.max_tokens_per_example
     )
     assert sampled_ids == fitting_ids
 
@@ -79,7 +79,7 @@ def test_batches_hold_each_fitting_utterance_once(
 def test_batches_hold_one_bucket(sampler: DynamicBucketingSampler) -> None:
     """Check that the utterances of each micro-batch come from one bucket."""
     for batch in sampler:
-        buckets = {bisect_left(sampler.duration_bins, count_cut_tokens(cut)) for cut in batch}
+        buckets = {bisect_left(sampler.duration_bins, calc_num_cut_tokens(cut)) for cut in batch}
         assert len(buckets) == 1
 
 
@@ -89,14 +89,16 @@ def test_ranks_take_equal_steps_of_different_utterances(cuts: CutSet) -> None:
     Every rank has to run the same number of steps; together they cover the fitting utterances.
     """
     samplers = [
-        build_token_bucketing_sampler(cuts, count_cut_tokens, CONFIG, rank=rank, world_size=2)
+        build_token_bucketing_sampler(cuts, calc_num_cut_tokens, CONFIG, rank=rank, world_size=2)
         for rank in range(2)
     ]
     batches_rank0, batches_rank1 = (list(sampler) for sampler in samplers)
     assert len(batches_rank0) == len(batches_rank1)
     ids_rank0 = [cut.id for batch in batches_rank0 for cut in batch]
     ids_rank1 = [cut.id for batch in batches_rank1 for cut in batch]
-    fitting_ids = [cut.id for cut in cuts if count_cut_tokens(cut) <= CONFIG.max_tokens_per_example]
+    fitting_ids = [
+        cut.id for cut in cuts if calc_num_cut_tokens(cut) <= CONFIG.max_tokens_per_example
+    ]
     assert not set(ids_rank0) & set(ids_rank1)
     assert sorted(ids_rank0 + ids_rank1) == sorted(fitting_ids)
 
@@ -107,7 +109,7 @@ def test_constraint_closes_batch_before_limit_can_be_passed() -> None:
     In a bucket of up to 100 tokens, 90-token examples are added up to the 11th (990 tokens),
     after which a 100-token example would make 1090 tokens.
     """
-    constraint = PackedTokenConstraint(1000, count_cut_tokens, bucket_max_tokens=[100, 300])
+    constraint = PackedTokenConstraint(1000, calc_num_cut_tokens, bucket_max_tokens=[100, 300])
     num_examples = 0
     while not constraint.close_to_exceeding():
         constraint.add(build_cut(num_examples, 90))

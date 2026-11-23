@@ -19,7 +19,7 @@ class PackedTokenConstraint(SamplingConstraint):
     """
 
     max_tokens_per_batch: int
-    count_tokens: Callable[[Cut], int]
+    calc_num_tokens: Callable[[Cut], int]
     # The largest token count of each bucket of the sampler, in increasing order.
     bucket_max_tokens: list[int]
     num_tokens: int = 0
@@ -48,7 +48,7 @@ class PackedTokenConstraint(SamplingConstraint):
 
     def measure_length(self, example: Cut) -> int:
         """Return the number of tokens of ``example``."""
-        return self.count_tokens(example)
+        return self.calc_num_tokens(example)
 
     def fits(self, example: Cut) -> bool:
         """Return whether ``example`` fits in the largest bucket."""
@@ -81,7 +81,7 @@ class TokenBucketingConfig:
 
 def build_token_bucketing_sampler(
     cuts: CutSet,
-    count_tokens: Callable[[Cut], int],
+    calc_num_tokens: Callable[[Cut], int],
     config: TokenBucketingConfig,
     rank: int,
     world_size: int,
@@ -89,12 +89,12 @@ def build_token_bucketing_sampler(
     """Build a sampler of shuffled micro-batches of utterances of similar token counts.
 
     A micro-batch has at most ``config.max_tokens_per_batch`` tokens, counted with
-    ``count_tokens``. ``rank`` and ``world_size`` are those of data parallelism: every rank
+    ``calc_num_tokens``. ``rank`` and ``world_size`` are those of data parallelism: every rank
     gets as many micro-batches, and lhotse tries to take those of one step from the same bucket
     (``sync_buckets``).
     """
     constraint = PackedTokenConstraint(
-        config.max_tokens_per_batch, count_tokens, [config.max_tokens_per_example]
+        config.max_tokens_per_batch, calc_num_tokens, [config.max_tokens_per_example]
     )
     cuts = cuts.filter(constraint.fits)
     bins = estimate_duration_buckets(

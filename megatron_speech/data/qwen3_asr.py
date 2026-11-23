@@ -107,7 +107,7 @@ class Qwen3ASRExampleBuilder:
             ),
         )
 
-    def count_tokens(self, num_samples: int, transcript: str) -> int:
+    def calc_num_tokens(self, num_samples: int, transcript: str) -> int:
         """Count the tokens of the example built of ``num_samples`` samples and ``transcript``.
 
         Micro-batches are limited by this count, which needs only the number of samples.

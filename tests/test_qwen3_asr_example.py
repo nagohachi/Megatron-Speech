@@ -101,7 +101,7 @@ def test_token_count_matches_example(
     builder: Qwen3ASRExampleBuilder, example: SpeechExample, num_samples: int, transcript: str
 ) -> None:
     """Check that the token count from the number of samples is the length of the example."""
-    assert builder.count_tokens(num_samples, transcript) == len(example.input_ids)
+    assert builder.calc_num_tokens(num_samples, transcript) == len(example.input_ids)
 
 
 def test_transcript_with_token_text_stays_text(
