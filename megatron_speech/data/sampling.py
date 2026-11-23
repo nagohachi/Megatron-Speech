@@ -13,9 +13,8 @@ from lhotse.dataset.sampling.dynamic_bucketing import estimate_duration_buckets
 class PackedTokenConstraint(SamplingConstraint):
     """Limit of the tokens in a micro-batch whose examples are packed into one row.
 
-    In lhotse's bucketing sampler, an example is added to a batch before the batch is checked
-    for room, and a batch holds the examples of one bucket. The batch is therefore closed as soon
-    as one more example of the bucket's largest token count could pass ``max_tokens_per_batch``.
+    Each batch is closed early enough that the largest example of its bucket would still fit,
+    so that no batch passes ``max_tokens_per_batch``.
     """
 
     max_tokens_per_batch: int
