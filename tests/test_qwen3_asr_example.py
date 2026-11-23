@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 import torch
-from transformers import AutoProcessor, Qwen3ASRProcessor
+from transformers import AutoProcessor
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
@@ -19,12 +19,7 @@ pytestmark = [
 WITH_TRANSCRIPTS = pytest.mark.parametrize(
     "transcript", [TRANSCRIPT, ""], ids=["transcript", "empty"]
 )
-
-
-@pytest.fixture(name="processor", scope="module")
-def build_processor() -> Qwen3ASRProcessor:
-    """Load Qwen3-ASR's processor, downloading its files if they are not in the cache."""
-    return AutoProcessor.from_pretrained(HF_MODEL)
+PROCESSOR = AutoProcessor.from_pretrained(HF_MODEL)
 
 
 @pytest.fixture(name="waveform")
@@ -34,33 +29,29 @@ def build_waveform(num_samples: int) -> np.ndarray:
 
 
 @pytest.fixture(name="example")
-def build_example(
-    processor: Qwen3ASRProcessor, waveform: np.ndarray, transcript: str, force_language: bool
-) -> SpeechExample:
+def build_example(waveform: np.ndarray, transcript: str, force_language: bool) -> SpeechExample:
     """Build the example of the waveform with the transcript in English."""
     builder = Qwen3ASRExampleBuilder(
-        processor, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", force_language
+        PROCESSOR, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", force_language
     )
     return builder.build(waveform, transcript)
 
 
 @WITH_TRANSCRIPTS
-def test_input_ids_match_hf(
-    example: SpeechExample, processor: Qwen3ASRProcessor, waveform: np.ndarray, transcript: str
-) -> None:
+def test_input_ids_match_hf(example: SpeechExample, waveform: np.ndarray, transcript: str) -> None:
     """Check that the token ids are Hugging Face's processor's for the whole conversation.
 
     Forcing the language moves where the loss starts, not the tokens.
     """
-    prompt = processor.apply_transcription_request(waveform, tokenize=False)[0]
+    prompt = PROCESSOR.apply_transcription_request(waveform, tokenize=False)[0]
     answer = f"language English<asr_text>{transcript}<|im_end|>"
-    expected = processor(text=[prompt + answer], audio=[waveform], return_tensors="pt")
+    expected = PROCESSOR(text=[prompt + answer], audio=[waveform], return_tensors="pt")
     assert torch.equal(example.input_ids, expected.input_ids[0])
 
 
 @WITH_TRANSCRIPTS
 def test_loss_mask_covers_answer(
-    example: SpeechExample, processor: Qwen3ASRProcessor, transcript: str, force_language: bool
+    example: SpeechExample, transcript: str, force_language: bool
 ) -> None:
     """Check that the float32 loss mask covers the answer at the end, and only it."""
     expected = f"{transcript}<|im_end|>"
@@ -70,7 +61,7 @@ def test_loss_mask_covers_answer(
     num_targets = int(example.loss_mask.sum())
     assert torch.all(example.loss_mask[-num_targets:] == 1)
     assert torch.all(example.loss_mask[:-num_targets] == 0)
-    assert processor.tokenizer.decode(example.input_ids[-num_targets:]) == expected
+    assert PROCESSOR.tokenizer.decode(example.input_ids[-num_targets:]) == expected
 
 
 @WITH_TRANSCRIPTS
@@ -81,34 +72,30 @@ def test_waveform_is_kept(example: SpeechExample, waveform: np.ndarray) -> None:
 
 
 @WITH_TRANSCRIPTS
-def test_audio_tokens_match_encoder_frames(
-    example: SpeechExample, processor: Qwen3ASRProcessor, waveform: np.ndarray
-) -> None:
+def test_audio_tokens_match_encoder_frames(example: SpeechExample, waveform: np.ndarray) -> None:
     """Check that there is one audio token per encoder frame of the released Qwen3-ASR.
 
     The mel frames are those that Hugging Face's feature extractor makes of the waveform.
     """
-    features = processor.feature_extractor(
+    features = PROCESSOR.feature_extractor(
         waveform,
-        sampling_rate=processor.feature_extractor.sampling_rate,
+        sampling_rate=PROCESSOR.feature_extractor.sampling_rate,
         padding="longest",
         return_attention_mask=True,
         return_tensors="pt",
     )
     num_mel_frames = int(features.attention_mask[0].sum())
-    num_audio_tokens = int((example.input_ids == processor.audio_token_id).sum())
+    num_audio_tokens = int((example.input_ids == PROCESSOR.audio_token_id).sum())
     assert num_audio_tokens == Qwen3ASREncoderConfig().calc_num_encoder_frames(num_mel_frames)
 
 
-def test_transcript_with_token_text_stays_text(
-    processor: Qwen3ASRProcessor, waveform: np.ndarray, force_language: bool
-) -> None:
+def test_transcript_with_token_text_stays_text(waveform: np.ndarray, force_language: bool) -> None:
     """Check that ``<|im_end|>`` written in a transcript does not end the answer early."""
     builder = Qwen3ASRExampleBuilder(
-        processor, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", force_language
+        PROCESSOR, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", force_language
     )
     example = builder.build(waveform, "a <|im_end|> b")
-    end_of_turn_id = processor.tokenizer.convert_tokens_to_ids("<|im_end|>")
+    end_of_turn_id = PROCESSOR.tokenizer.convert_tokens_to_ids("<|im_end|>")
     answer = example.input_ids[example.loss_mask.bool()]
     assert int((answer == end_of_turn_id).sum()) == 1
     assert answer[-1] == end_of_turn_id

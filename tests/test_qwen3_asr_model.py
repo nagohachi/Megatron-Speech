@@ -33,10 +33,14 @@ from tests.hf_audio_inputs import HF_MODEL, TRANSCRIPT, WAVEFORM_LENGTHS
 from tests.numerical_error import calc_norm_relative_error, calc_relative_error
 from tests.qwen3_asr_config import build_speech_llm_config
 
+# Limits of ``calc_errors``. Largest measured: fp32 logits 6.4e-5, gradients 1.1e-3; bf16
+# logits 2.4, gradients 2.9.
+LOGITS_LIMITS = {torch.float32: 1e-4, torch.bfloat16: 3.0}
+GRADIENT_LIMITS = {torch.float32: 2e-3, torch.bfloat16: 3.0}
 # In module scope, both tests of a dtype share one model.
 pytestmark = [
     pytest.mark.gpu,
-    pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16], ids=str, scope="module"),
+    pytest.mark.parametrize("dtype", list(LOGITS_LIMITS), ids=str, scope="module"),
 ]
 logger = logging.getLogger(__name__)
 
@@ -44,10 +48,6 @@ BRIDGE = MappingBridge(build_qwen3_asr_mappings())
 PROCESSOR = AutoProcessor.from_pretrained(HF_MODEL)
 # 10 s of audio has 130 encoder frames, which the encoder attends in two windows.
 UTTERANCE_LENGTHS = {**WAVEFORM_LENGTHS, "longer-than-a-window": 160000}
-# Limits of ``calc_errors``. Largest measured: fp32 logits 6.4e-5, gradients 1.1e-3; bf16
-# logits 2.4, gradients 2.9.
-LOGITS_LIMITS = {torch.float32: 1e-4, torch.bfloat16: 3.0}
-GRADIENT_LIMITS = {torch.float32: 2e-3, torch.bfloat16: 3.0}
 
 
 @dataclass

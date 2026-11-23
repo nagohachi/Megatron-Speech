@@ -11,9 +11,14 @@ from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer import TransformerConfig
 
 from megatron_speech.models.language_model import SpeechLanguageModel
-from tests.numerical_error import TOLERANCES, calc_relative_error
+from tests.numerical_error import TOLERANCES, WITH_DTYPES, calc_relative_error
 
-pytestmark = pytest.mark.gpu
+pytestmark = [
+    pytest.mark.gpu,
+    WITH_DTYPES,
+    # How the batch holds its sequences: one per row, or packed into one row.
+    pytest.mark.parametrize("qkv_format", ["sbhd", "thd"]),
+]
 logger = logging.getLogger(__name__)
 
 VOCAB_SIZE = 128
@@ -21,6 +26,8 @@ BATCH_SIZE = 2
 SEQUENCE_LENGTH = 16
 # Sequences that the thd batch packs into one row of SEQUENCE_LENGTH tokens.
 PACKED_SEQUENCE_LENGTHS = [7, 5, 4]
+# Which positions of the batch are targets: some of them, or all.
+WITH_TARGETS = pytest.mark.parametrize("target_pattern", ["some", "all"])
 
 
 @dataclass
@@ -91,18 +98,6 @@ def build_model(
     )
     model.load_state_dict(reference.state_dict())
     return model
-
-
-@pytest.fixture(name="target_pattern", params=["some", "all"])
-def get_target_pattern(request: pytest.FixtureRequest) -> str:
-    """Return which positions of the batch are targets: ``some`` of them or ``all``."""
-    return request.param
-
-
-@pytest.fixture(name="qkv_format", params=["sbhd", "thd"])
-def get_qkv_format(request: pytest.FixtureRequest) -> str:
-    """Return how the batch holds its sequences: one per row or packed into one row."""
-    return request.param
 
 
 @pytest.fixture(name="batch")
@@ -199,6 +194,7 @@ def calc_model_gradients(
     return {name: param.grad for name, param in model.named_parameters()}
 
 
+@WITH_TARGETS
 def test_loss_has_gpt_model_shape(
     model_loss: torch.Tensor, reference_loss: torch.Tensor, batch: Batch
 ) -> None:
@@ -206,6 +202,7 @@ def test_loss_has_gpt_model_shape(
     assert model_loss.shape == reference_loss.shape == batch.loss_mask.shape
 
 
+@WITH_TARGETS
 def test_loss_matches_gpt_model_at_targets(
     model_loss: torch.Tensor, reference_loss: torch.Tensor, batch: Batch, dtype: torch.dtype
 ) -> None:
@@ -216,11 +213,13 @@ def test_loss_matches_gpt_model_at_targets(
     assert error < TOLERANCES[dtype]
 
 
+@WITH_TARGETS
 def test_loss_is_zero_off_targets(model_loss: torch.Tensor, batch: Batch) -> None:
     """Check that the positions without a target get a loss of 0."""
     assert torch.all(model_loss[~batch.loss_mask.bool()] == 0)
 
 
+@WITH_TARGETS
 def test_gradients_match_gpt_model(
     model_gradients: dict[str, torch.Tensor | None],
     reference_gradients: dict[str, torch.Tensor | None],
@@ -239,6 +238,7 @@ def test_gradients_match_gpt_model(
     assert max(errors.values()) < TOLERANCES[dtype], errors
 
 
+@WITH_TARGETS
 def test_returns_logits_without_labels(
     model: SpeechLanguageModel, reference: GPTModel, batch: Batch, dtype: torch.dtype
 ) -> None:
@@ -272,6 +272,7 @@ def test_gradients_are_zero_without_targets(
         assert torch.all(grad == 0), name
 
 
+@WITH_TARGETS
 def test_returns_gpt_model_loss_without_loss_mask(
     model: SpeechLanguageModel, reference_loss: torch.Tensor, batch: Batch, dtype: torch.dtype
 ) -> None:
