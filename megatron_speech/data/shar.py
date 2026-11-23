@@ -20,10 +20,16 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--shard-size", type=int, default=1000, help="utterances per shard")
     parser.add_argument("--seed", type=int, default=0, help="seed of the shuffle before sharding")
     parser.add_argument(
-        "--num-read-jobs", type=int, default=4, help="number of parallel jobs that read the corpus"
+        "--num-read-jobs",
+        type=int,
+        default=4,
+        help="number of parallel jobs for reading the corpus",
     )
     parser.add_argument(
-        "--num-write-jobs", type=int, default=4, help="number of parallel jobs for writing shards"
+        "--num-write-jobs",
+        type=int,
+        default=4,
+        help="number of parallel jobs for writing the shards",
     )
     args = parser.parse_args(argv)
     if args.shard_size < 1:
@@ -35,8 +41,8 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
 
     recipe = RECIPES[args.recipe]()
-    all_cuts = recipe.build_cuts(args.corpus_dir, args.parts, args.num_read_jobs)
-    for part, cuts in all_cuts.items():
+    cuts_by_part = recipe.build_cuts(args.corpus_dir, args.parts, args.num_read_jobs)
+    for part, cuts in cuts_by_part.items():
         part_dir = args.output_dir / part
         part_dir.mkdir(parents=True, exist_ok=True)
         # Utterances may come grouped by speaker; they are shuffled to mix speakers in each shard.
