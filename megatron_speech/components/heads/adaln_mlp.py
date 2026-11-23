@@ -201,11 +201,6 @@ class AdaLNMLPHead(MegatronModule):
                 for name in head_config.scalar_condition_names
             }
         )
-        num_frequencies = head_config.frequency_embedding_size // 2
-        frequencies = torch.exp(
-            -math.log(head_config.max_period) * torch.arange(num_frequencies) / num_frequencies
-        )
-        self.register_buffer("frequencies", frequencies, persistent=False)
         self.layers = torch.nn.ModuleList(
             AdaLNLayer(config, tp_group) for _ in range(head_config.num_layers)
         )
@@ -235,11 +230,18 @@ class AdaLNMLPHead(MegatronModule):
                 f"conditioned on {sorted(expected_names)}"
             )
         dtype = self.config.params_dtype
+        # In fp32 here rather than in a buffer, which converting the head to bf16 would round.
+        num_frequencies = self.head_config.frequency_embedding_size // 2
+        frequencies = torch.exp(
+            -math.log(self.head_config.max_period)
+            * torch.arange(num_frequencies, device=noisy_latents.device)
+            / num_frequencies
+        )
         condition = gather_from_tensor_model_parallel_region(
             self.condition_projection(hidden_states.to(dtype))[0]
         ).unsqueeze(1)
         for name, embedding in self.scalar_embeddings.items():
-            phases = scalar_conditions[name].float().unsqueeze(-1) * self.frequencies
+            phases = scalar_conditions[name].float().unsqueeze(-1) * frequencies
             features = torch.cat([torch.cos(phases), torch.sin(phases)], dim=-1)
             condition = condition + embedding(features.to(dtype))[0]
         condition = torch.nn.functional.silu(condition)
