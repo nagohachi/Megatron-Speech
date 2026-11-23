@@ -126,6 +126,9 @@ class SpeechLanguageModel(GPTModel):
         finally:
             self.output_layer.sequence_parallel = sequence_parallel
         target_labels = labels.transpose(0, 1)[target_indices].unsqueeze(0)
+        # GPTModel passes _scale_logits to its output processor as scale_logits; a caller that
+        # runs after forward, such as the model around MultiStreamLanguageModel, has no such
+        # argument.
         target_loss = self.compute_language_model_loss(target_labels, self._scale_logits(logits))
         loss = target_loss.new_zeros(hidden_states.shape[:2])
         return loss.index_put(target_indices, target_loss[0]).transpose(0, 1).contiguous()
