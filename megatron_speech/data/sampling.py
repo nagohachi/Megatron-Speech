@@ -46,7 +46,7 @@ class PackedTokenConstraint(SamplingConstraint):
         self.max_tokens_of_next_example = 0
 
     def measure_length(self, example: Cut) -> int:
-        """Return the number of tokens of ``example``."""
+        """Return the number of tokens of ``example``, as lhotse's samplers measure lengths."""
         return self.calc_num_tokens(example)
 
     def fits(self, example: Cut) -> bool:
