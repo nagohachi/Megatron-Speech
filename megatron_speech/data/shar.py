@@ -21,6 +21,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=0, help="seed of the shuffle before sharding")
     parser.add_argument("--num-jobs", type=int, default=4, help="processes that write shards")
     args = parser.parse_args(argv)
+    if args.shard_size < 1:
+        parser.error(f"--shard-size must be at least 1, got {args.shard_size}")
+    if args.num_jobs < 1:
+        parser.error(f"--num-jobs must be at least 1, got {args.num_jobs}")
     logging.basicConfig(level=logging.INFO)
 
     for part, cuts in RECIPES[args.recipe](args.corpus_dir, args.parts, args.num_jobs).items():

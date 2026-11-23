@@ -71,3 +71,23 @@ def test_shards_hold_shard_size_utterances(shar_dir: Path) -> None:
     """Check that every shard but the last holds ``SHARD_SIZE`` utterances."""
     shard_sizes = [len(CutSet.from_file(path)) for path in sorted(shar_dir.glob("cuts.*.jsonl.gz"))]
     assert shard_sizes == [2, 2, 1]
+
+
+@pytest.mark.parametrize("option", ["--shard-size", "--num-jobs"])
+def test_rejects_counts_below_one(
+    option: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that a count below 1 stops the writer, with a message that names the option."""
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "librispeech",
+                str(tmp_path),
+                str(tmp_path / "shar"),
+                "--parts",
+                "dev-clean",
+                option,
+                "0",
+            ]
+        )
+    assert f"{option} must be at least 1" in capsys.readouterr().err
