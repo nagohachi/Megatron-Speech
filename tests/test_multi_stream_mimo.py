@@ -165,16 +165,18 @@ def sum_reference_llm_input(model: MultiStreamMimoModel, batch: Batch) -> torch.
     The input is ``[num_positions, 1, hidden]``. The word embedding counts at the text positions
     only; the LLM's rotary positions add nothing to it.
     """
-    # The word embeddings are split over the TP ranks along the vocabulary.
-    word_embeddings = gather_from_tensor_model_parallel_region(
-        dict(model.named_parameters())[WORD_EMBEDDINGS].t()
-    ).t()
+    parameters = dict(model.named_parameters())
+    # The TP ranks split the word embeddings along the vocabulary and each projector's linear
+    # layer along its output features.
+    word_embeddings = gather_from_tensor_model_parallel_region(parameters[WORD_EMBEDDINGS].t()).t()
     text_positions = batch.modality_token_indices["text"]
     llm_input = torch.zeros(batch.input_ids.size(1), HIDDEN_SIZE, device="cuda")
     llm_input[text_positions] += word_embeddings[batch.input_ids[0, text_positions]]
     for name, inputs in batch.stream_inputs.items():
-        projector = model.modality_submodules[name].encoders[ENCODER_NAME]
-        stream_embeddings = projector(inputs)
+        layer = f"modality_submodules.{name}.encoders.{ENCODER_NAME}.layers.0"
+        weight = gather_from_tensor_model_parallel_region(parameters[f"{layer}.weight"].t()).t()
+        bias = gather_from_tensor_model_parallel_region(parameters[f"{layer}.bias"])
+        stream_embeddings = torch.nn.functional.linear(inputs, weight, bias)
         llm_input[batch.modality_token_indices[name]] += stream_embeddings.float()
     return llm_input.to(word_embeddings.dtype).unsqueeze(1)
 
