@@ -121,7 +121,9 @@ def build_batch(dtype: torch.dtype) -> Batch:
     num_positions = sum(SEQUENCE_LENGTHS)
     return Batch(
         input_ids=torch.randint(VOCAB_SIZE, (1, num_positions), device="cuda"),
-        position_ids=torch.cat([torch.arange(n) for n in SEQUENCE_LENGTHS])[None].cuda(),
+        position_ids=torch.cat(
+            [torch.arange(sequence_length) for sequence_length in SEQUENCE_LENGTHS]
+        )[None].cuda(),
         labels=torch.randint(VOCAB_SIZE, (1, num_positions), device="cuda"),
         loss_mask=torch.ones(1, num_positions, device="cuda"),
         cu_seqlens=torch.tensor(
