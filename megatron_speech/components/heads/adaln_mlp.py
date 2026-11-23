@@ -66,10 +66,10 @@ def _normalize_by_rms(hidden_states: torch.Tensor, eps: float) -> torch.Tensor:
 
     Transformer Engine's RMSNorm fails on an empty input, which a batch without audio gives.
     """
-    normalized = torch.nn.functional.rms_norm(
+    normalized_states = torch.nn.functional.rms_norm(
         hidden_states.float(), (hidden_states.shape[-1],), eps=eps
     )
-    return normalized.to(hidden_states.dtype)
+    return normalized_states.to(hidden_states.dtype)
 
 
 class AdaLNLayer(MegatronModule):
@@ -94,10 +94,10 @@ class AdaLNLayer(MegatronModule):
         """Update ``[..., hidden_size]`` hidden states with the ``condition`` after SiLU."""
         modulation = gather_from_tensor_model_parallel_region(self.modulation(condition)[0])
         shift, scale, gate = modulation.chunk(3, dim=-1)
-        normalized = (
+        normalized_states = (
             _normalize_by_rms(hidden_states, self.config.layernorm_epsilon) * self.norm_weight
         )
-        mlp_output, _ = self.mlp(normalized * (1 + scale) + shift)
+        mlp_output, _ = self.mlp(normalized_states * (1 + scale) + shift)
         return hidden_states + gate * mlp_output
 
 
@@ -248,6 +248,6 @@ class AdaLNMLPHead(MegatronModule):
             hidden = layer(hidden, condition)
         modulation = gather_from_tensor_model_parallel_region(self.final_modulation(condition)[0])
         shift, scale = modulation.chunk(2, dim=-1)
-        normalized = _normalize_by_rms(hidden, self.head_config.norm_eps)
-        output = self.output_projection(normalized * (1 + scale) + shift)[0]
+        normalized_hidden = _normalize_by_rms(hidden, self.head_config.norm_eps)
+        output = self.output_projection(normalized_hidden * (1 + scale) + shift)[0]
         return gather_from_tensor_model_parallel_region(output)

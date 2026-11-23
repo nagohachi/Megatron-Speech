@@ -102,10 +102,10 @@ class ReferenceLayer(torch.nn.Module):
     def forward(self, hidden_states: torch.Tensor, condition: torch.Tensor) -> torch.Tensor:
         """Apply the layer as ``AdaLNLayer`` does."""
         shift, scale, gate = self.modulation(condition).chunk(3, dim=-1)
-        normalized = torch.nn.functional.rms_norm(
+        normalized_states = torch.nn.functional.rms_norm(
             hidden_states, (hidden_states.shape[-1],), self.norm_weight, self.norm_eps
         )
-        return hidden_states + gate * self.mlp(normalized * (1 + scale) + shift)
+        return hidden_states + gate * self.mlp(normalized_states * (1 + scale) + shift)
 
 
 class ReferenceHead(torch.nn.Module):
@@ -156,10 +156,10 @@ class ReferenceHead(torch.nn.Module):
         for layer in self.layers:
             hidden = layer(hidden, condition)
         shift, scale = self.final_modulation(condition).chunk(2, dim=-1)
-        normalized = torch.nn.functional.rms_norm(
+        normalized_hidden = torch.nn.functional.rms_norm(
             hidden, (hidden.shape[-1],), eps=self.head_config.norm_eps
         )
-        return self.output_projection(normalized * (1 + scale) + shift)
+        return self.output_projection(normalized_hidden * (1 + scale) + shift)
 
 
 def take_reference_shards(
