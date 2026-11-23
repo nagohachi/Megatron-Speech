@@ -5,11 +5,8 @@ from megatron.core.models.mimo import MimoModel
 class MultiStreamMimoModel(MimoModel):
     """``MimoModel`` whose LLM input at a position is the sum of the embeddings placed there.
 
-    A position can hold a text token and any number of audio streams: the 17 streams of a Moshi
-    step, the text and two audio latents of a Haru-4B frame, or either a text token or a latent
-    in LatentLM. ``MimoModel`` puts one modality at each position by replacing a placeholder
-    token; this model adds the embeddings of every modality at its positions instead. The
-    positions come from ``modality_token_indices`` of ``forward``, which every call must pass.
+    Every call of ``forward`` passes the positions of each modality in
+    ``modality_token_indices``; a position can hold several modalities.
     """
 
     def align_embeddings_by_token_positions(
