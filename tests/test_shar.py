@@ -70,7 +70,10 @@ def test_shards_hold_every_utterance(shar_dir: Path, corpus_dir: Path) -> None:
 def test_shards_hold_shard_size_utterances(shar_dir: Path) -> None:
     """Check that every shard but the last holds ``SHARD_SIZE`` utterances."""
     shard_sizes = [len(CutSet.from_file(path)) for path in sorted(shar_dir.glob("cuts.*.jsonl.gz"))]
-    assert shard_sizes == [2, 2, 1]
+    num_utterances = len(TRANSCRIPTS)
+    assert shard_sizes == [
+        min(SHARD_SIZE, num_utterances - start) for start in range(0, num_utterances, SHARD_SIZE)
+    ]
 
 
 @pytest.mark.parametrize("option", ["--shard-size", "--num-jobs"])
