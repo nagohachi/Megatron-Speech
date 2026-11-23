@@ -175,9 +175,11 @@ def sum_reference_llm_input(model: MultiStreamMimoModel, batch: Batch) -> torch.
     llm_input = torch.zeros(batch.input_ids.size(1), HIDDEN_SIZE, device="cuda")
     llm_input[text_positions] += word_embeddings[batch.input_ids[0, text_positions]]
     for name, inputs in batch.stream_inputs.items():
-        layer = f"modality_submodules.{name}.encoders.{ENCODER_NAME}.layers.0"
-        weight = gather_from_tensor_model_parallel_region(parameters[f"{layer}.weight"].t()).t()
-        bias = gather_from_tensor_model_parallel_region(parameters[f"{layer}.bias"])
+        layer_name = f"modality_submodules.{name}.encoders.{ENCODER_NAME}.layers.0"
+        weight = gather_from_tensor_model_parallel_region(
+            parameters[f"{layer_name}.weight"].t()
+        ).t()
+        bias = gather_from_tensor_model_parallel_region(parameters[f"{layer_name}.bias"])
         stream_embeddings = torch.nn.functional.linear(inputs, weight, bias)
         llm_input[batch.modality_token_indices[name]] += stream_embeddings.float()
     return llm_input.to(word_embeddings.dtype).unsqueeze(1)
