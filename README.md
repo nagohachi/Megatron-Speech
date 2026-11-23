@@ -25,6 +25,10 @@ CUDA_VISIBLE_DEVICES=0,1 apptainer/run.sh python -m torch.distributed.run --npro
 - apptainer がないサーバーでは singularity を使う
 - リポジトリと `HF_HOME` があるファイルシステムのマウント点を bind する（singularity は自動では bind しない）
 
+## データの準備
+
+学習のデータを lhotse Shar の形式で用意する手順は [docs/data.md](docs/data.md) にある。
+
 ## テスト
 
 ```bash
@@ -46,6 +50,7 @@ patches/                    Megatron-LM へのパッチ（現在は空）
 apptainer/                  コンテナの起動スクリプトと venv の構築
 megatron_speech/
   components/               音声 LLM の component（encoder、projector、音声の head）
+  data/                     学習の入力を作る処理（コーパスの recipe、Shar の書き出しなど）
   training/                 学習の entry point、設定ファイルの読み込み、recipe
 tests/                      テスト
 configs/                    設定ファイルの例
