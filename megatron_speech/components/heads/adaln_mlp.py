@@ -59,7 +59,7 @@ def _build_column_parallel_linear(
     )
 
 
-def _rms_norm(hidden_states: torch.Tensor, eps: float) -> torch.Tensor:
+def _normalize_by_rms(hidden_states: torch.Tensor, eps: float) -> torch.Tensor:
     """Normalize the last dim by its root mean square in fp32, as Haru-4B's head does.
 
     Transformer Engine's RMSNorm fails on an empty input, which a batch without audio gives.
@@ -92,7 +92,9 @@ class AdaLNLayer(MegatronModule):
         """Update ``[..., hidden_size]`` hidden states with the ``condition`` after SiLU."""
         modulation = gather_from_tensor_model_parallel_region(self.modulation(condition)[0])
         shift, scale, gate = modulation.chunk(3, dim=-1)
-        normalized = _rms_norm(hidden_states, self.config.layernorm_epsilon) * self.norm_weight
+        normalized = (
+            _normalize_by_rms(hidden_states, self.config.layernorm_epsilon) * self.norm_weight
+        )
         mlp_output, _ = self.mlp(normalized * (1 + scale) + shift)
         return hidden_states + gate * mlp_output
 
@@ -236,6 +238,6 @@ class AdaLNMLPHead(MegatronModule):
             hidden = layer(hidden, condition)
         modulation = gather_from_tensor_model_parallel_region(self.final_modulation(condition)[0])
         shift, scale = modulation.chunk(2, dim=-1)
-        normalized = _rms_norm(hidden, self.head_config.norm_eps)
+        normalized = _normalize_by_rms(hidden, self.head_config.norm_eps)
         output = self.output_projection(normalized * (1 + scale) + shift)[0]
         return gather_from_tensor_model_parallel_region(output)
