@@ -13,7 +13,15 @@ TRANSCRIPTS = {
     "19-198-0001": "CHAPTER ONE",
     "19-227-0000": "NO ONE WHO HAD EVER SEEN CATHERINE",
     "26-495-0000": "AND THE NIGHT WAS DARK",
-    "26-495-0001": "SHE SAID",
+    "26-495-0001": "SHE SAID IT WAS WARRENTON'S",
+}
+# The transcripts as they are written to the shards with the LibriSpeech recipe.
+NORMALIZED_TRANSCRIPTS = {
+    "19-198-0000": "northanger abbey",
+    "19-198-0001": "chapter one",
+    "19-227-0000": "no one who had ever seen catherine",
+    "26-495-0000": "and the night was dark",
+    "26-495-0001": "she said it was warrenton's",
 }
 SAMPLING_RATE = 16000
 SHARD_SIZE = 2
@@ -78,7 +86,7 @@ def test_shards_hold_every_utterance_once(shar_dir: Path) -> None:
 def test_shards_hold_normalized_transcripts(shar_dir: Path) -> None:
     """Check that each utterance in the shards has its transcript, in lowercase for LibriSpeech."""
     for cut in CutSet.from_shar(in_dir=shar_dir):
-        assert cut.supervisions[0].text == TRANSCRIPTS[cut.recording_id].lower()
+        assert cut.supervisions[0].text == NORMALIZED_TRANSCRIPTS[cut.recording_id]
 
 
 def test_shards_hold_original_audio(shar_dir: Path, corpus_dir: Path) -> None:
