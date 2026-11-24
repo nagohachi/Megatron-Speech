@@ -9,6 +9,7 @@ import soundfile as sf
 import torch
 from lhotse import CutSet, Recording, SupervisionSegment
 from lhotse.utils import compute_num_samples
+from torch.utils.data import DataLoader, DistributedSampler
 
 from megatron_speech.data.dataset import AudioTextDataset, AudioTextExampleBuilder
 from megatron_speech.data.packing import AudioTextExample, PackedAudioTextBatch
@@ -202,6 +203,13 @@ def test_evaluations_take_same_batches(provider: AudioTextDatasetsProvider, shar
         strict=True,
     ):
         assert torch.equal(batch.input_ids, batch_of_first_evaluation.input_ids)
+
+
+def test_epochs_reject_empty_data(provider: AudioTextDatasetsProvider) -> None:
+    """Check that training data without micro-batches is rejected instead of read forever."""
+    loader = DataLoader([], sampler=DistributedSampler([], num_replicas=1, rank=0), batch_size=None)
+    with pytest.raises(RuntimeError, match="no micro-batch"):
+        next(provider.iterate_epochs(loader))
 
 
 def test_evaluations_reject_empty_data(provider: AudioTextDatasetsProvider) -> None:

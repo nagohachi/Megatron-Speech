@@ -108,7 +108,12 @@ class AudioTextDatasetsProvider:
         """Yield the micro-batches of ``loader`` epoch after epoch, each epoch in another order."""
         for epoch in count():
             loader.sampler.set_epoch(epoch)
-            yield from loader
+            num_microbatches_read = 0
+            for batch in loader:
+                num_microbatches_read += 1
+                yield batch
+            if not num_microbatches_read:
+                raise RuntimeError("the training data have no micro-batch on this rank")
 
     def iterate_evaluations(
         self, loader: Iterable[PackedAudioTextBatch]
