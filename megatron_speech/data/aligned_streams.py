@@ -169,14 +169,15 @@ class WindowSplitter:
 class StreamDelay:
     """How one stream of a recording is delayed, as ``StreamDelayer`` takes it.
 
-    - ``delay``: number of frames by which the stream starts later than the recording.
+    - ``num_delay_frames``: number of frames by which the stream starts later than the
+      recording.
     - ``initial_value``: value of the frames before the delayed stream starts, such as Moshi's
       initial token.
     - ``padding_value``: value of the frames after the stream ends, when ``StreamDelayer``
       makes the recording longer (J-Moshi's padding token).
     """
 
-    delay: int
+    num_delay_frames: int
     initial_value: int | float
     padding_value: int | float
 
@@ -216,8 +217,11 @@ class StreamDelayer:
     def __post_init__(self) -> None:
         """Check that no stream is delayed by a negative number of frames."""
         for name, stream_delay in self.delays.items():
-            if stream_delay.delay < 0:
-                raise ValueError(f"stream {name} has a negative delay of {stream_delay.delay}")
+            if stream_delay.num_delay_frames < 0:
+                raise ValueError(
+                    f"stream {name} has a negative num_delay_frames of "
+                    f"{stream_delay.num_delay_frames}"
+                )
 
     def delay_streams(self, streams: AlignedStreams) -> AlignedStreams:
         """Return the streams of a recording, each delayed by its ``StreamDelay``.
@@ -243,19 +247,19 @@ class StreamDelayer:
                 f"the recording has the streams {sorted(streams.streams)}, but delays has "
                 f"{sorted(self.delays)}"
             )
-        max_delay = max(stream_delay.delay for stream_delay in self.delays.values())
+        max_delay = max(stream_delay.num_delay_frames for stream_delay in self.delays.values())
         num_frames = streams.num_frames
 
         def delay_stream(stream: FrameStream, stream_delay: StreamDelay) -> FrameStream:
             """Put ``initial_value`` before the stream, and ``padding_value`` after it."""
             if self.keep_length:
-                num_initial_frames = min(stream_delay.delay, num_frames)
+                num_initial_frames = min(stream_delay.num_delay_frames, num_frames)
                 num_stream_frames = num_frames - num_initial_frames
                 num_padding_frames = 0
             else:
-                num_initial_frames = stream_delay.delay
+                num_initial_frames = stream_delay.num_delay_frames
                 num_stream_frames = num_frames
-                num_padding_frames = max_delay - stream_delay.delay
+                num_padding_frames = max_delay - stream_delay.num_delay_frames
             frame_shape = stream.values.shape[1:]
             dtype = stream.values.dtype
             values = torch.cat(

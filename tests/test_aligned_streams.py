@@ -164,11 +164,11 @@ def test_rejects_min_frames_above_max_frames() -> None:
 # and the first codebook are not delayed, an acoustic codebook is delayed by one frame, as in
 # Moshi, and by two frames, to test longer delays. A stream of codec latents is delayed by one.
 STREAM_DELAYS = {
-    "text": StreamDelay(delay=0, initial_value=32000, padding_value=3),
-    "semantic": StreamDelay(delay=0, initial_value=2048, padding_value=2048),
-    "acoustic": StreamDelay(delay=1, initial_value=2048, padding_value=2048),
-    "late_acoustic": StreamDelay(delay=2, initial_value=2048, padding_value=2048),
-    "latents": StreamDelay(delay=1, initial_value=0.0, padding_value=0.0),
+    "text": StreamDelay(num_delay_frames=0, initial_value=32000, padding_value=3),
+    "semantic": StreamDelay(num_delay_frames=0, initial_value=2048, padding_value=2048),
+    "acoustic": StreamDelay(num_delay_frames=1, initial_value=2048, padding_value=2048),
+    "late_acoustic": StreamDelay(num_delay_frames=2, initial_value=2048, padding_value=2048),
+    "latents": StreamDelay(num_delay_frames=1, initial_value=0.0, padding_value=0.0),
 }
 NUM_DELAYED_FRAMES = 6
 MAX_DELAY = 2
@@ -194,8 +194,8 @@ def build_undelayed_streams() -> AlignedStreams:
 
 def delay_as_kyutai(values: torch.Tensor, stream_delay: StreamDelay) -> torch.Tensor:
     """Delay one stream as Kyutai's ``_delay_sequence``: roll it and fill its first frames."""
-    delayed_values = values.roll(stream_delay.delay, dims=0)
-    delayed_values[: stream_delay.delay] = stream_delay.initial_value
+    delayed_values = values.roll(stream_delay.num_delay_frames, dims=0)
+    delayed_values[: stream_delay.num_delay_frames] = stream_delay.initial_value
     return delayed_values
 
 
@@ -206,11 +206,11 @@ def delay_as_jmoshi(values: torch.Tensor, stream_delay: StreamDelay) -> torch.Te
     the input by one frame and not a part of the delay.
     """
     num_frames = values.size(0)
-    delay = stream_delay.delay
+    num_delay_frames = stream_delay.num_delay_frames
     delayed_values = torch.empty((num_frames + MAX_DELAY, *values.shape[1:]), dtype=values.dtype)
-    delayed_values[:delay] = stream_delay.initial_value
-    delayed_values[delay : delay + num_frames] = values
-    delayed_values[delay + num_frames :] = stream_delay.padding_value
+    delayed_values[:num_delay_frames] = stream_delay.initial_value
+    delayed_values[num_delay_frames : num_delay_frames + num_frames] = values
+    delayed_values[num_delay_frames + num_frames :] = stream_delay.padding_value
     return delayed_values
 
 
@@ -273,8 +273,8 @@ def test_matches_delay_example_of_docstring(
         }
     )
     delays = {
-        "text": StreamDelay(delay=0, initial_value=99, padding_value=3),
-        "codebook": StreamDelay(delay=1, initial_value=99, padding_value=99),
+        "text": StreamDelay(num_delay_frames=0, initial_value=99, padding_value=3),
+        "codebook": StreamDelay(num_delay_frames=1, initial_value=99, padding_value=99),
     }
     delayed_streams = StreamDelayer(delays, keep_length).delay_streams(streams)
     assert delayed_streams.streams["text"].values.tolist() == expected_text
@@ -301,7 +301,8 @@ def test_rejects_streams_other_than_delays(
 
 def test_rejects_negative_delay() -> None:
     """Check that a negative delay raises ValueError when the delayer is made."""
-    with pytest.raises(ValueError, match="stream text has a negative delay of -1"):
+    with pytest.raises(ValueError, match="stream text has a negative num_delay_frames of -1"):
         StreamDelayer(
-            {"text": StreamDelay(delay=-1, initial_value=0, padding_value=0)}, keep_length=True
+            {"text": StreamDelay(num_delay_frames=-1, initial_value=0, padding_value=0)},
+            keep_length=True,
         )
