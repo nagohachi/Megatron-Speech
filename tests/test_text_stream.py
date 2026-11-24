@@ -89,6 +89,14 @@ def test_pads_frames_without_tokens(builder: TextStreamBuilder) -> None:
 
 
 @WITH_LEFTOVER_RULES
+def test_builds_no_frames_for_zero_frames(builder: TextStreamBuilder) -> None:
+    """Check that ``num_frames=0`` gives an empty stream of int64 token ids."""
+    stream = builder.build(SEPARATE_TOKENS, num_frames=0)
+    assert stream.tolist() == []
+    assert stream.dtype == torch.int64
+
+
+@WITH_LEFTOVER_RULES
 def test_orders_tokens_by_start_time(builder: TextStreamBuilder) -> None:
     """Check that the tokens are placed in the order of their start times, not of the list."""
     stream = builder.build(SEPARATE_TOKENS[::-1], num_frames=9)

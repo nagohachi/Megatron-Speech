@@ -82,4 +82,4 @@ class TextStreamBuilder:
                     stream[frame - 1] = self.end_of_padding_id
                 stream[frame] = token_id
                 next_frame = frame + 1
-        return torch.tensor(stream)
+        return torch.tensor(stream, dtype=torch.int64)
