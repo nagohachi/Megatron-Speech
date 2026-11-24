@@ -14,10 +14,7 @@ from megatron_speech.data.packing import (
 
 
 class AudioTextExampleBuilder(ABC):
-    """Base class of the builders of ``AudioTextExample``; one is written for each prompt format.
-
-    The prompt of Qwen3-ASR is built by ``Qwen3ASRExampleBuilder``.
-    """
+    """Base class of the builders of ``AudioTextExample``; one is written for each prompt format."""
 
     @property
     @abstractmethod
