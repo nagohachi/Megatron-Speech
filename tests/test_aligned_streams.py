@@ -9,7 +9,7 @@ from megatron_speech.data.aligned_streams import AlignedStreams, FrameStream, Wi
 NUM_FRAMES = 10
 NUM_CODEBOOKS = 8
 LATENT_SIZE = 4
-# Runs a test with windows cut every max_frames frames and with windows of even lengths.
+# Runs a test with windows cut every max_num_frames frames and with windows of even lengths.
 WITH_BOTH_SPLITS = pytest.mark.parametrize("split_evenly", [False, True])
 
 
@@ -78,24 +78,24 @@ def test_rejects_no_streams() -> None:
         AlignedStreams({})
 
 
-def test_cuts_windows_every_max_frames() -> None:
-    """Check that windows start every ``max_frames`` frames and only the last is shorter."""
-    splitter = WindowSplitter(max_frames=4, split_evenly=False, min_frames=0)
+def test_cuts_windows_every_max_num_frames() -> None:
+    """Check that windows start every ``max_num_frames`` frames and only the last is shorter."""
+    splitter = WindowSplitter(max_num_frames=4, split_evenly=False, min_num_frames=0)
     assert splitter.split(10) == [range(0, 4), range(4, 8), range(8, 10)]
 
 
 def test_splits_windows_evenly() -> None:
     """Check that even windows are as few as fit and differ in length by at most one frame."""
-    splitter = WindowSplitter(max_frames=4, split_evenly=True, min_frames=0)
+    splitter = WindowSplitter(max_num_frames=4, split_evenly=True, min_num_frames=0)
     assert splitter.split(10) == [range(0, 4), range(4, 7), range(7, 10)]
 
 
 def test_even_windows_match_numpy_array_split() -> None:
     """Check that even windows have the lengths of ``numpy.array_split``, as in J-Moshi."""
-    max_frames = 7
-    splitter = WindowSplitter(max_frames=max_frames, split_evenly=True, min_frames=0)
+    max_num_frames = 7
+    splitter = WindowSplitter(max_num_frames=max_num_frames, split_evenly=True, min_num_frames=0)
     for num_frames in range(1, 50):
-        num_windows = math.ceil(num_frames / max_frames)
+        num_windows = math.ceil(num_frames / max_num_frames)
         lengths = [len(part) for part in np.array_split(np.arange(num_frames), num_windows)]
         windows = splitter.split(num_frames)
         assert [len(window) for window in windows] == lengths, num_frames
@@ -104,31 +104,31 @@ def test_even_windows_match_numpy_array_split() -> None:
 
 @WITH_BOTH_SPLITS
 def test_keeps_recording_shorter_than_window(split_evenly: bool) -> None:
-    """Check that a recording shorter than ``max_frames`` is one window."""
-    splitter = WindowSplitter(max_frames=4, split_evenly=split_evenly, min_frames=0)
+    """Check that a recording shorter than ``max_num_frames`` is one window."""
+    splitter = WindowSplitter(max_num_frames=4, split_evenly=split_evenly, min_num_frames=0)
     assert splitter.split(3) == [range(0, 3)]
 
 
 @WITH_BOTH_SPLITS
 def test_splits_no_frames_into_no_windows(split_evenly: bool) -> None:
     """Check that a recording without frames gives no windows."""
-    splitter = WindowSplitter(max_frames=4, split_evenly=split_evenly, min_frames=0)
+    splitter = WindowSplitter(max_num_frames=4, split_evenly=split_evenly, min_num_frames=0)
     assert splitter.split(0) == []
 
 
-def test_drops_windows_shorter_than_min_frames() -> None:
-    """Check that windows shorter than ``min_frames`` are dropped."""
-    splitter = WindowSplitter(max_frames=4, split_evenly=False, min_frames=3)
+def test_drops_windows_shorter_than_min_num_frames() -> None:
+    """Check that windows shorter than ``min_num_frames`` are dropped."""
+    splitter = WindowSplitter(max_num_frames=4, split_evenly=False, min_num_frames=3)
     assert splitter.split(10) == [range(0, 4), range(4, 8)]
 
 
 def test_rejects_windows_without_frames() -> None:
-    """Check that ``max_frames=0`` raises ValueError when the splitter is made."""
-    with pytest.raises(ValueError, match="max_frames must be at least 1"):
-        WindowSplitter(max_frames=0, split_evenly=False, min_frames=0)
+    """Check that ``max_num_frames=0`` raises ValueError when the splitter is made."""
+    with pytest.raises(ValueError, match="max_num_frames must be at least 1"):
+        WindowSplitter(max_num_frames=0, split_evenly=False, min_num_frames=0)
 
 
-def test_rejects_min_frames_above_max_frames() -> None:
-    """Check that ``min_frames`` above ``max_frames`` raises ValueError at construction."""
-    with pytest.raises(ValueError, match="min_frames must be from 0 to max_frames"):
-        WindowSplitter(max_frames=4, split_evenly=False, min_frames=5)
+def test_rejects_min_num_frames_above_max_num_frames() -> None:
+    """Check that ``min_num_frames`` above ``max_num_frames`` raises ValueError at construction."""
+    with pytest.raises(ValueError, match="min_num_frames must be from 0 to max_num_frames"):
+        WindowSplitter(max_num_frames=4, split_evenly=False, min_num_frames=5)
