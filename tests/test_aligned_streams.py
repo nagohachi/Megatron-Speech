@@ -170,7 +170,7 @@ STREAM_DELAYS = {
     "late_acoustic": StreamDelay(num_delay_frames=2, initial_value=2048, padding_value=2048),
     "latents": StreamDelay(num_delay_frames=1, initial_value=0.0, padding_value=0.0),
 }
-NUM_DELAYED_FRAMES = 6
+NUM_RECORDING_FRAMES = 6
 MAX_DELAY = 2
 
 
@@ -181,13 +181,13 @@ def build_undelayed_streams() -> AlignedStreams:
     The latents are absent at frames 0 and 1, as at a prompt that holds only text.
     """
     torch.manual_seed(1)
-    all_frames = torch.ones(NUM_DELAYED_FRAMES, dtype=torch.bool)
+    all_frames = torch.ones(NUM_RECORDING_FRAMES, dtype=torch.bool)
     streams = {
-        name: FrameStream(torch.randint(2048, (NUM_DELAYED_FRAMES,)), all_frames)
+        name: FrameStream(torch.randint(2048, (NUM_RECORDING_FRAMES,)), all_frames)
         for name in ["text", "semantic", "acoustic", "late_acoustic"]
     }
     streams["latents"] = FrameStream(
-        torch.randn(NUM_DELAYED_FRAMES, LATENT_SIZE), torch.arange(NUM_DELAYED_FRAMES) >= 2
+        torch.randn(NUM_RECORDING_FRAMES, LATENT_SIZE), torch.arange(NUM_RECORDING_FRAMES) >= 2
     )
     return AlignedStreams(streams)
 
@@ -219,7 +219,7 @@ def test_keeps_length_as_kyutai(undelayed_streams: AlignedStreams) -> None:
     delayed_streams = StreamDelayer(STREAM_DELAYS, keep_length=True).delay_streams(
         undelayed_streams
     )
-    assert delayed_streams.num_frames == NUM_DELAYED_FRAMES
+    assert delayed_streams.num_frames == NUM_RECORDING_FRAMES
     for name, stream in delayed_streams.streams.items():
         expected = delay_as_kyutai(undelayed_streams.streams[name].values, STREAM_DELAYS[name])
         assert torch.equal(stream.values, expected), name
@@ -230,7 +230,7 @@ def test_extends_length_as_jmoshi(undelayed_streams: AlignedStreams) -> None:
     delayed_streams = StreamDelayer(STREAM_DELAYS, keep_length=False).delay_streams(
         undelayed_streams
     )
-    assert delayed_streams.num_frames == NUM_DELAYED_FRAMES + MAX_DELAY
+    assert delayed_streams.num_frames == NUM_RECORDING_FRAMES + MAX_DELAY
     for name, stream in delayed_streams.streams.items():
         expected = delay_as_jmoshi(undelayed_streams.streams[name].values, STREAM_DELAYS[name])
         assert torch.equal(stream.values, expected), name
