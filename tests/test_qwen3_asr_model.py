@@ -1,7 +1,6 @@
 import gc
 import logging
 from dataclasses import dataclass, fields
-from itertools import accumulate
 
 import numpy as np
 import pytest
@@ -27,6 +26,7 @@ from megatron_speech.components.encoders.qwen3_asr import (
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMel, Qwen3ASRLogMelConfig
 from megatron_speech.conversion.bridge import MappingBridge
 from megatron_speech.conversion.qwen3_asr import build_qwen3_asr_mappings
+from megatron_speech.data.packing import PackedSpeechBatch
 from megatron_speech.data.qwen3_asr import Qwen3ASRExampleBuilder, SpeechExample
 from megatron_speech.models.speech_llm import AUDIO_MODALITY, ENCODER_NAME, build_speech_llm
 from tests.hf_audio_inputs import HF_MODEL, TRANSCRIPT, WAVEFORM_LENGTHS
@@ -48,6 +48,8 @@ BRIDGE = MappingBridge(build_qwen3_asr_mappings())
 PROCESSOR = AutoProcessor.from_pretrained(HF_MODEL)
 # 10 s of audio has 130 encoder frames, which the encoder attends in two windows.
 UTTERANCE_LENGTHS = {**WAVEFORM_LENGTHS, "longer-than-a-window": 160000}
+# Each utterance is padded to a multiple of 8 tokens, as for context or sequence parallelism.
+PAD_TO_MULTIPLE = 8
 
 
 @dataclass
@@ -86,15 +88,14 @@ def build_examples(waveforms: dict[str, np.ndarray]) -> dict[str, SpeechExample]
 
 
 def calc_target_cross_entropy(
-    logits: torch.Tensor, input_ids: torch.Tensor, loss_mask: torch.Tensor
+    logits: torch.Tensor, labels: torch.Tensor, loss_mask: torch.Tensor
 ) -> torch.Tensor:
-    """Sum the cross entropy of the target tokens of one utterance, from ``[num_tokens, vocab]``.
+    """Sum the cross entropy at the positions where ``loss_mask`` is 1.
 
-    The logits at each position predict the next token; ``loss_mask`` marks the targets.
+    ``logits`` is ``[num_tokens, vocab]``; ``labels`` holds the token that each position predicts.
     """
-    log_probs = torch.log_softmax(logits[:-1].float(), dim=-1)
-    target_log_probs = log_probs.gather(-1, input_ids[1:, None])[:, 0]
-    return -(target_log_probs * loss_mask[1:]).sum()
+    log_probs = torch.log_softmax(logits.float(), dim=-1)
+    return -(log_probs.gather(-1, labels[:, None])[:, 0] * loss_mask).sum()
 
 
 @pytest.fixture(name="hf_pretrained", scope="module")
@@ -130,8 +131,9 @@ def run_reference(
                 "cuda", dtype
             )
             utterance_logits = model(**inputs).logits[0]
+            # The logits at each position predict the next token.
             calc_target_cross_entropy(
-                utterance_logits, inputs.input_ids[0], examples[name].loss_mask.cuda()
+                utterance_logits[:-1], inputs.input_ids[0, 1:], examples[name].loss_mask[1:].cuda()
             ).backward()
             logits[name] = utterance_logits.detach().float()
         # The state dict has the names that Megatron-Bridge exports, with the tied output weight.
@@ -195,45 +197,39 @@ def calc_model_outputs(
             for param, weight in zip(params, weights, strict=True):
                 param.data = weight
 
+    batch = PackedSpeechBatch.build(
+        list(examples.values()), PAD_TO_MULTIPLE, PROCESSOR.tokenizer.pad_token_id
+    )
+
     def build_modality_inputs() -> dict[str, dict[str, dict[str, torch.Tensor | int]]]:
         """Compute the log-mel of all utterances on the GPU and cut it for the encoder."""
         log_mel_transform = Qwen3ASRLogMel(Qwen3ASRLogMelConfig()).cuda()
-        mels = log_mel_transform([example.waveform.cuda() for example in examples.values()])
+        mels = log_mel_transform([waveform.cuda() for waveform in batch.waveforms])
         encoder_inputs = Qwen3ASREncoderInputs.build(mels, Qwen3ASREncoderConfig()).to("cuda")
         encoder_kwargs = {
             field.name: getattr(encoder_inputs, field.name) for field in fields(encoder_inputs)
         }
         return {AUDIO_MODALITY: {ENCODER_NAME: encoder_kwargs}}
 
-    token_counts = [len(example.input_ids) for example in examples.values()]
-    # The positions start again at 0 in each utterance.
-    position_ids = torch.cat([torch.arange(token_count) for token_count in token_counts])
     logits, _ = model(
-        input_ids=torch.cat([example.input_ids for example in examples.values()])[None].cuda(),
-        position_ids=position_ids[None].cuda(),
+        input_ids=batch.input_ids.cuda(),
+        position_ids=batch.position_ids.cuda(),
         modality_inputs=build_modality_inputs(),
-        cu_seqlens=torch.tensor([0, *accumulate(token_counts)], dtype=torch.int32, device="cuda"),
-        max_seqlen=torch.tensor(max(token_counts)),
+        cu_seqlens=batch.cu_seqlens.cuda(),
+        max_seqlen=batch.max_seqlen,
     )
     # The logits are split over the TP ranks along the vocabulary.
-    logits_by_utterance = dict(
-        zip(
-            examples,
-            gather_from_tensor_model_parallel_region(logits)[0].split(token_counts),
-            strict=True,
-        )
-    )
-    sum(
-        calc_target_cross_entropy(
-            logits_by_utterance[name], example.input_ids.cuda(), example.loss_mask.cuda()
-        )
-        for name, example in examples.items()
+    row_logits = gather_from_tensor_model_parallel_region(logits)[0]
+    calc_target_cross_entropy(
+        row_logits, batch.labels[0].cuda(), batch.loss_mask[0].cuda()
     ).backward()
     finalize_model_grads([model])  # sums the QK layernorm gradients over TP, as in training
     return ModelOutputs(
         logits={
-            name: utterance_logits.detach().float()
-            for name, utterance_logits in logits_by_utterance.items()
+            name: row_logits[start : start + len(example.input_ids)].detach().float()
+            for (name, example), start in zip(
+                examples.items(), batch.cu_seqlens[:-1].tolist(), strict=True
+            )
         },
         gradients=export_gradients(),
     )
