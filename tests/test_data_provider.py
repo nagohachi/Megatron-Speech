@@ -212,10 +212,21 @@ def test_evaluations_reject_empty_data() -> None:
         next(iterate_evaluations([], 3))
 
 
-def test_evaluations_reject_no_microbatches() -> None:
-    """Check that evaluations of no micro-batches are rejected with the name of the setting."""
-    with pytest.raises(ValueError, match="num_microbatches_per_evaluation"):
-        next(iterate_evaluations([], 0))
+@pytest.mark.parametrize(
+    ("setting", "value"), [("pad_to_multiple", 0), ("num_microbatches_per_evaluation", 0)]
+)
+def test_provider_rejects_impossible_settings(shar_dir: Path, setting: str, value: int) -> None:
+    """Check that an impossible padding or evaluation setting is rejected with its name."""
+    data_config = AudioTextDataConfig([shar_dir], [shar_dir], TOKEN_BUCKETING_CONFIG)
+    settings = {"pad_to_multiple": PAD_TO_MULTIPLE, "num_microbatches_per_evaluation": 3}
+    with pytest.raises(ValueError, match=setting):
+        AudioTextDatasetsProvider(data_config, CharExampleBuilder(), **{**settings, setting: value})
+
+
+def test_provider_without_validation_data_needs_no_evaluations(shar_dir: Path) -> None:
+    """Check that without validation data, no micro-batches of an evaluation are needed."""
+    data_config = AudioTextDataConfig([shar_dir], [], TOKEN_BUCKETING_CONFIG)
+    AudioTextDatasetsProvider(data_config, CharExampleBuilder(), PAD_TO_MULTIPLE, 0)
 
 
 def test_loader_rejects_directories_without_shards(

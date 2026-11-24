@@ -40,11 +40,6 @@ def iterate_evaluations(
     An evaluation takes ``num_microbatches_per_evaluation`` micro-batches; when ``loader`` has
     fewer, it is read again from the start within the evaluation.
     """
-    if num_microbatches_per_evaluation < 1:
-        raise ValueError(
-            "num_microbatches_per_evaluation must be at least 1, got "
-            f"{num_microbatches_per_evaluation}"
-        )
     while True:
         num_microbatches_left = num_microbatches_per_evaluation
         while num_microbatches_left:
@@ -87,8 +82,15 @@ class AudioTextDatasetsProvider:
             ``PackedAudioTextBatch.build`` takes it for sequence and context parallelism.
         num_microbatches_per_evaluation
             Micro-batches of one evaluation on each data parallel rank: ``--eval-iters`` times
-            the micro-batches of an evaluation step.
+            the micro-batches of an evaluation step. Without validation data, it is not used.
         """
+        if pad_to_multiple < 1:
+            raise ValueError(f"pad_to_multiple must be at least 1, got {pad_to_multiple}")
+        if data_config.valid_shar_dirs and num_microbatches_per_evaluation < 1:
+            raise ValueError(
+                "num_microbatches_per_evaluation must be at least 1 with validation data, got "
+                f"{num_microbatches_per_evaluation}"
+            )
         self.data_config = data_config
         self.example_builder = example_builder
         self.pad_to_multiple = pad_to_multiple
