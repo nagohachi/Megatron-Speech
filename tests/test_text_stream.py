@@ -1,3 +1,5 @@
+from typing import Literal
+
 import pytest
 import torch
 
@@ -33,7 +35,7 @@ OVERLAPPING_TOKENS = [
 
 
 @pytest.fixture(name="builder")
-def build_text_stream_builder(leftover_tokens: str) -> TextStreamBuilder:
+def build_text_stream_builder(leftover_tokens: Literal["drop", "delay"]) -> TextStreamBuilder:
     """Build a builder with Moshi's frame rate and tokens and the rule ``leftover_tokens``."""
     return TextStreamBuilder(
         frames_per_second=FRAMES_PER_SECOND,
@@ -117,7 +119,7 @@ def test_rejects_unknown_leftover_rule() -> None:
             frames_per_second=FRAMES_PER_SECOND,
             padding_id=PAD,
             end_of_padding_id=EPAD,
-            leftover_tokens="shift",
+            leftover_tokens="shift",  # type: ignore[arg-type]  # a name of no rule, on purpose
         )
 
 
