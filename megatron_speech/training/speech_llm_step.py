@@ -1,6 +1,5 @@
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import fields
-from functools import partial
 
 import torch
 
@@ -39,7 +38,10 @@ class SpeechLLMForwardStep:
 
     def __call__(
         self, data_iterator: Iterator[PackedAudioTextBatch], model: torch.nn.Module
-    ) -> tuple[torch.Tensor, partial[tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]]]:
+    ) -> tuple[
+        torch.Tensor,
+        Callable[[torch.Tensor], tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]],
+    ]:
         """Run the next micro-batch of ``data_iterator`` through the speech LLM ``model``.
 
         Returns
@@ -47,8 +49,29 @@ class SpeechLLMForwardStep:
         loss
             ``[1, num_tokens]`` loss at the target tokens, 0 elsewhere.
         loss_func
-            ``sum_target_loss`` with the loss mask, which Megatron calls on ``loss``.
+            ``sum_target_loss``, which Megatron calls on ``loss``.
         """
+
+        def sum_target_loss(
+            loss: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+            """Sum ``loss`` over the target tokens and count them, as Megatron's loss function.
+
+            Returns
+            -------
+            summed_loss
+                Sum of ``loss`` where ``loss_mask`` is 1.
+            num_target_tokens
+                Number of these tokens, an int tensor.
+            report
+                ``{"lm loss": [summed_loss, num_target_tokens]}``. Megatron's log sums it over the
+                micro-batches and the data parallel ranks and divides the first by the second.
+            """
+            summed_loss = (loss.float() * loss_mask).sum()
+            num_target_tokens = loss_mask.sum().to(torch.int)
+            report = {"lm loss": torch.stack([summed_loss.detach(), num_target_tokens.float()])}
+            return summed_loss, num_target_tokens, report
+
         batch = next(data_iterator)
         mels = self.log_mel.cuda()([waveform.cuda() for waveform in batch.waveforms])
         encoder_inputs = Qwen3ASREncoderInputs.build(mels, self.encoder_config).to("cuda")
@@ -64,25 +87,4 @@ class SpeechLLMForwardStep:
             cu_seqlens=batch.cu_seqlens.cuda(),
             max_seqlen=batch.max_seqlen,
         )
-        return loss, partial(self.sum_target_loss, loss_mask)
-
-    @staticmethod
-    def sum_target_loss(
-        loss_mask: torch.Tensor, loss: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
-        """Sum ``loss`` over the target tokens and count them, as Megatron's loss function.
-
-        Returns
-        -------
-        summed_loss
-            Sum of ``loss`` where ``loss_mask`` is 1.
-        num_target_tokens
-            Number of these tokens, an int tensor.
-        report
-            ``{"lm loss": [summed_loss, num_target_tokens]}``. Megatron's log sums it over the
-            micro-batches and the data parallel ranks and divides the first by the second.
-        """
-        summed_loss = (loss.float() * loss_mask).sum()
-        num_target_tokens = loss_mask.sum().to(torch.int)
-        report = {"lm loss": torch.stack([summed_loss.detach(), num_target_tokens.float()])}
-        return summed_loss, num_target_tokens, report
+        return loss, sum_target_loss
