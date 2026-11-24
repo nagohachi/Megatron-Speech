@@ -43,6 +43,8 @@ ENCODER_CONFIG = Qwen3ASREncoderConfig(
     n_window_infer=200,
 )
 LOG_MEL_CONFIG = Qwen3ASRLogMelConfig(feature_size=ENCODER_CONFIG.num_mel_bins)
+# Which parallelism the processes of the test run: all of them over DP, or all over TP.
+WITH_PARALLELISMS = pytest.mark.parametrize("parallelism", ["data", "tensor"], scope="module")
 
 
 @dataclass
@@ -53,12 +55,13 @@ class TrainingStepOutputs:
     gradients: dict[str, torch.Tensor]
 
 
-def build_config(dtype: torch.dtype) -> SpeechLLMConfig:
+def build_config(dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLLMConfig:
     """Build a small speech LLM config whose loss is averaged over the target tokens."""
     transformer_config = TransformerConfig(
         num_layers=2,
         hidden_size=64,
         num_attention_heads=4,
+        tensor_model_parallel_size=tensor_parallel_size,
         bf16=dtype == torch.bfloat16,
         params_dtype=dtype,
         hidden_dropout=0.0,
@@ -80,17 +83,21 @@ def build_config(dtype: torch.dtype) -> SpeechLLMConfig:
     )
 
 
-FORWARD_STEP = SpeechLLMForwardStep(build_config(torch.float32), LOG_MEL_CONFIG)
+FORWARD_STEP = SpeechLLMForwardStep(build_config(torch.float32, 1), LOG_MEL_CONFIG)
 
 
 @pytest.fixture(name="data_parallel_size", scope="module")
-def init_data_parallel(tensor_parallel_size: int) -> Iterator[int]:
-    """Rebuild Megatron's process groups with DP over all processes, for the tests here.
+def init_process_groups(parallelism: str, tensor_parallel_size: int) -> Iterator[int]:
+    """Rebuild Megatron's process groups with all processes over ``parallelism``.
 
     The groups with TP over all processes come back after the tests.
     """
+    if parallelism == "tensor" and tensor_parallel_size == 1:
+        pytest.skip("one process runs TP=1 and DP=1, as the data parallel tests do")
     parallel_state.destroy_model_parallel()
-    parallel_state.initialize_model_parallel(tensor_model_parallel_size=1)
+    parallel_state.initialize_model_parallel(
+        tensor_model_parallel_size=tensor_parallel_size if parallelism == "tensor" else 1
+    )
     yield parallel_state.get_data_parallel_world_size()
     parallel_state.destroy_model_parallel()
     parallel_state.initialize_model_parallel(tensor_model_parallel_size=tensor_parallel_size)
@@ -102,7 +109,7 @@ def build_model(dtype: torch.dtype, data_parallel_size: int) -> DistributedDataP
     """Build the speech LLM with random weights, the same on every rank, in Megatron's DDP."""
     torch.manual_seed(0)
     model_parallel_cuda_manual_seed(0)
-    config = build_config(dtype)
+    config = build_config(dtype, parallel_state.get_tensor_model_parallel_world_size())
     model = build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups()).cuda()
     # Megatron's schedule reads the model type, which pretrain() sets on the model.
     model.model_type = ModelType.encoder_or_decoder
@@ -194,7 +201,7 @@ def run_one_row(
     of the row, and the gradients are its own, without the gradients of the other DP ranks.
     """
     reference_model = build_speech_llm(
-        build_config(torch.float32),
+        build_config(torch.float32, parallel_state.get_tensor_model_parallel_world_size()),
         ProcessGroupCollection.use_mpu_process_groups(),
     ).cuda()
     weights = dict(model.module.named_parameters())
@@ -216,6 +223,7 @@ def run_one_row(
 
 @pytest.mark.gpu
 @WITH_DTYPES
+@WITH_PARALLELISMS
 def test_loss_matches_one_row(
     model_outputs: TrainingStepOutputs,
     reference_outputs: TrainingStepOutputs,
@@ -224,12 +232,19 @@ def test_loss_matches_one_row(
 ) -> None:
     """Check that the logged loss is the mean over the targets of all micro-batches and ranks."""
     error = calc_relative_error(model_outputs.loss, reference_outputs.loss)
-    logger.info("%s, DP=%d: loss relative error %.2e", dtype, data_parallel_size, error)
+    logger.info(
+        "%s, TP=%d, DP=%d: loss relative error %.2e",
+        dtype,
+        parallel_state.get_tensor_model_parallel_world_size(),
+        data_parallel_size,
+        error,
+    )
     assert error < TOLERANCES[dtype]
 
 
 @pytest.mark.gpu
 @WITH_DTYPES
+@WITH_PARALLELISMS
 def test_gradients_match_one_row(
     model_outputs: TrainingStepOutputs,
     reference_outputs: TrainingStepOutputs,
@@ -242,8 +257,9 @@ def test_gradients_match_one_row(
         for name, gradient in model_outputs.gradients.items()
     }
     logger.info(
-        "%s, DP=%d: largest gradient relative error %.2e (%s)",
+        "%s, TP=%d, DP=%d: largest gradient relative error %.2e (%s)",
         dtype,
+        parallel_state.get_tensor_model_parallel_world_size(),
         data_parallel_size,
         max(errors.values()),
         max(errors, key=errors.get),
@@ -253,7 +269,7 @@ def test_gradients_match_one_row(
 
 def test_rejects_loss_averaged_per_microbatch() -> None:
     """Check that a config without ``calculate_per_token_loss`` raises ValueError."""
-    config = build_config(torch.float32)
+    config = build_config(torch.float32, 1)
     config = replace(
         config,
         llm=replace(
@@ -267,4 +283,4 @@ def test_rejects_loss_averaged_per_microbatch() -> None:
 def test_rejects_log_mel_bins_other_than_encoder_input() -> None:
     """Check that a log-mel whose bins are not the encoder's input bins raises ValueError."""
     with pytest.raises(ValueError, match=r"feature_size=128 differs from encoder\.num_mel_bins"):
-        SpeechLLMForwardStep(build_config(torch.float32), Qwen3ASRLogMelConfig())
+        SpeechLLMForwardStep(build_config(torch.float32, 1), Qwen3ASRLogMelConfig())
