@@ -55,21 +55,22 @@ class TextStreamBuilder:
         ``timed_tokens`` is placed in the order of the start times. The tokens that do not fit
         before the end of the frames are dropped. A start time before 0 raises ValueError.
         """
-        ordered_tokens = sorted(timed_tokens, key=lambda tokens: tokens.start_time)
+        ordered_timed_tokens = sorted(timed_tokens, key=lambda token_group: token_group.start_time)
         start_frames = [
-            math.floor(tokens.start_time * self.frames_per_second) for tokens in ordered_tokens
+            math.floor(token_group.start_time * self.frames_per_second)
+            for token_group in ordered_timed_tokens
         ]
         if start_frames and start_frames[0] < 0:
             raise ValueError(
-                f"a start time of {ordered_tokens[0].start_time} s is before the audio"
+                f"a start time of {ordered_timed_tokens[0].start_time} s is before the audio"
             )
         stream = [self.padding_id] * num_frames
         # Frame after the last placed token.
         next_frame = 0
         # Each start frame with the next one, or with the end of the frames for the last.
         start_frame_pairs = pairwise([*start_frames, num_frames])
-        for tokens, (start_frame, next_start_frame) in zip(
-            ordered_tokens, start_frame_pairs, strict=True
+        for token_group, (start_frame, next_start_frame) in zip(
+            ordered_timed_tokens, start_frame_pairs, strict=True
         ):
             if self.leftover_tokens == "delay":
                 first_frame, end_frame = max(start_frame, next_frame), num_frames
@@ -77,7 +78,7 @@ class TextStreamBuilder:
                 first_frame, end_frame = start_frame, min(next_start_frame, num_frames)
             # Stops at the end frame, or after the last token.
             frames = range(first_frame, end_frame)
-            for frame, token_id in zip(frames, tokens.token_ids, strict=False):
+            for frame, token_id in zip(frames, token_group.token_ids, strict=False):
                 if frame > 0 and stream[frame - 1] == self.padding_id:
                     stream[frame - 1] = self.end_of_padding_id
                 stream[frame] = token_id
