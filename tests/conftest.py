@@ -36,3 +36,11 @@ def init_model_parallel() -> Iterator[int]:
     yield world_size
     parallel_state.destroy_model_parallel()
     torch.distributed.destroy_process_group()
+
+
+@pytest.fixture(name="sequence_parallel", params=[False, True], ids=["no-sp", "sp"])
+def get_sequence_parallel(request: pytest.FixtureRequest, tensor_parallel_size: int) -> bool:
+    """Return whether the models run with sequence parallelism, which needs two TP ranks."""
+    if request.param and tensor_parallel_size == 1:
+        pytest.skip("sequence parallelism needs more than one TP rank")
+    return request.param
