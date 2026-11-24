@@ -1,4 +1,5 @@
 from bisect import bisect_left
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -19,6 +20,8 @@ TOKEN_BUCKETING_CONFIG = TokenBucketingConfig(
 )
 # Token counts of the utterances: mostly within the limit of an example, some above it.
 UTTERANCE_TOKEN_COUNTS = [*np.random.default_rng(0).integers(10, 300, 2000).tolist(), 301, 900]
+# The default buffer holds every utterance; a buffer of 50 makes micro-batches while reading.
+WITH_BUFFER_SIZES = pytest.mark.parametrize("buffer_size", [20000, 50])
 
 
 def build_cut(index: int, num_tokens: int) -> Cut:
@@ -54,13 +57,13 @@ def build_cuts() -> CutSet:
 
 
 @pytest.fixture(name="sampler")
-def build_sampler(cuts: CutSet) -> DynamicBucketingSampler:
-    """Build the sampler of the cuts on the only rank."""
-    return build_token_bucketing_sampler(
-        cuts, calc_num_cut_tokens, TOKEN_BUCKETING_CONFIG, rank=0, world_size=1
-    )
+def build_sampler(cuts: CutSet, buffer_size: int) -> DynamicBucketingSampler:
+    """Build the sampler of the cuts on the only rank, with a buffer of ``buffer_size`` cuts."""
+    config = replace(TOKEN_BUCKETING_CONFIG, buffer_size=buffer_size)
+    return build_token_bucketing_sampler(cuts, calc_num_cut_tokens, config, rank=0, world_size=1)
 
 
+@WITH_BUFFER_SIZES
 def test_batches_stay_within_token_limit(sampler: DynamicBucketingSampler) -> None:
     """Check that no micro-batch of an epoch has more than ``max_tokens_per_batch`` tokens."""
     for batch in sampler:
@@ -70,6 +73,7 @@ def test_batches_stay_within_token_limit(sampler: DynamicBucketingSampler) -> No
         )
 
 
+@WITH_BUFFER_SIZES
 def test_batches_hold_each_fitting_utterance_once(
     sampler: DynamicBucketingSampler, cuts: CutSet
 ) -> None:
@@ -83,6 +87,7 @@ def test_batches_hold_each_fitting_utterance_once(
     assert sampled_ids == fitting_ids
 
 
+@WITH_BUFFER_SIZES
 def test_batches_hold_one_bucket(sampler: DynamicBucketingSampler) -> None:
     """Check that the utterances of each micro-batch come from one bucket."""
     for batch in sampler:
@@ -129,6 +134,25 @@ def test_ranks_take_every_fitting_utterance(
     assert sorted(sampled_ids) == sorted(fitting_ids)
 
 
+def test_bucket_bounds_come_from_cuts_for_bins_estimate(cuts: CutSet) -> None:
+    """Check that the bucket bounds are estimated from ``cuts_for_bins_estimate`` if given.
+
+    The utterances of 10 to 59 tokens give bounds below 60; those of ``cuts`` go up to 299.
+    """
+    cuts_for_bins_estimate = CutSet.from_cuts(
+        build_cut(index, num_tokens) for index, num_tokens in enumerate(range(10, 60))
+    )
+    sampler = build_token_bucketing_sampler(
+        cuts,
+        calc_num_cut_tokens,
+        TOKEN_BUCKETING_CONFIG,
+        rank=0,
+        world_size=1,
+        cuts_for_bins_estimate=cuts_for_bins_estimate,
+    )
+    assert max(sampler.duration_bins) < 60
+
+
 def test_constraint_closes_batch_before_limit_can_be_passed() -> None:
     """Check that a batch is closed once one more example of its bucket could pass the limit.
 
@@ -151,6 +175,7 @@ def test_constraint_closes_batch_before_limit_can_be_passed() -> None:
         ("max_tokens_per_example", 0),
         ("num_buckets", 1),
         ("num_cuts_for_bins_estimate", 9),
+        ("buffer_size", 0),
     ],
 )
 def test_config_rejects_impossible_settings(setting: str, value: int) -> None:
