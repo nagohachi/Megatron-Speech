@@ -8,13 +8,14 @@ import torch
 
 @dataclass
 class TimedTokens:
-    """One word of a transcript, as its tokens and the time in the audio when it is spoken.
+    """Part of a transcript, as its tokens and the time in the audio when the part is spoken.
 
-    ``TextStreamBuilder`` takes a list of these. A word can also be split into parts, each with
-    its own time, such as one part for each token.
+    ``TextStreamBuilder`` takes a list of these. A part is usually one word, as in Kyutai's
+    moshi-finetune. J-Moshi gives each token of a word its own time, which makes each token a
+    part.
 
-    - ``token_ids``: the tokens of the word, in order.
-    - ``start_time``: seconds from the start of the audio to the start of the word.
+    - ``token_ids``: the tokens of the part, in order.
+    - ``start_time``: seconds from the start of the audio to the start of the part.
     """
 
     token_ids: list[int]
@@ -26,17 +27,18 @@ class TextStreamBuilder:
     """Builder of the text that Moshi and similar models read, one token per audio frame.
 
     These models read one text token at each frame of the audio, together with the audio of
-    that frame. ``build`` makes this text from the words of a transcript and the times when
-    they are spoken. The tokens of a word go on the frames from the one in which the word
-    starts, and the frames without a word get ``padding_id``. The last of these padding frames
-    before a word gets ``end_of_padding_id`` instead, which marks that a word starts next.
+    that frame. ``build`` makes this text from the parts of a transcript (``TimedTokens``) and
+    the times when they are spoken. The tokens of a part go on the frames from the one in
+    which the part starts, and the frames without text get ``padding_id``. The last of these
+    padding frames before a part gets ``end_of_padding_id`` instead, which marks that text
+    starts next.
 
     - ``frames_per_second``: frame rate of the audio codec, 12.5 for Moshi's Mimi.
     - ``padding_id``: token of a frame without text (Moshi's PAD).
     - ``end_of_padding_id``: token of the last frame of padding before text (Moshi's EPAD).
-    - ``leftover_tokens``: what to do when a word has tokens left at the frame where the next
-      word starts. ``"drop"`` drops the rest of the word, as Kyutai's moshi-finetune does;
-      ``"delay"`` places the rest first and the next word after it, as J-Moshi does.
+    - ``leftover_tokens``: what to do when a part has tokens left at the frame where the next
+      part starts. ``"drop"`` drops the rest of the part, as Kyutai's moshi-finetune does;
+      ``"delay"`` places the rest first and the next part after it, as J-Moshi does.
     """
 
     frames_per_second: float
@@ -54,9 +56,9 @@ class TextStreamBuilder:
             )
 
     def build(self, timed_tokens: list[TimedTokens], num_frames: int) -> torch.Tensor:
-        """Make the text for ``num_frames`` frames of audio from the words of ``timed_tokens``.
+        """Make the text for ``num_frames`` frames of audio from the parts in ``timed_tokens``.
 
-        Return the ``[num_frames]`` token ids, one for each frame. The words are placed in the
+        Return the ``[num_frames]`` token ids, one for each frame. The parts are placed in the
         order of their start times. The tokens that do not fit before the last frame are
         dropped. A start time before 0 raises ValueError.
         """
