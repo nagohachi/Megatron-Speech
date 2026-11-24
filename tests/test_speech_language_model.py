@@ -10,8 +10,9 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer import TransformerConfig
 
-from megatron_speech.models.language_model import SpeechLanguageModel
+from megatron_speech.models.language_model import MultiStreamLanguageModel, SpeechLanguageModel
 from tests.numerical_error import TOLERANCES, WITH_DTYPES, calc_relative_error
+from tests.tensor_parallel_shard import take_shard
 
 pytestmark = [
     pytest.mark.gpu,
@@ -100,6 +101,18 @@ def build_model(
     return model
 
 
+@pytest.fixture(name="multi_stream_model")
+def build_multi_stream_model(
+    reference: GPTModel, dtype: torch.dtype, sequence_parallel: bool, tensor_parallel_size: int
+) -> MultiStreamLanguageModel:
+    """Build a ``MultiStreamLanguageModel`` in ``dtype`` that holds the reference weights."""
+    model = build_language_model(
+        MultiStreamLanguageModel, dtype, sequence_parallel, tensor_parallel_size
+    )
+    model.load_state_dict(reference.state_dict())
+    return model
+
+
 @pytest.fixture(name="batch")
 def build_batch(target_pattern: str, qkv_format: str) -> Batch:
     """Build a batch in the layout ``qkv_format`` with the targets ``target_pattern`` names.
@@ -141,7 +154,7 @@ def build_batch(target_pattern: str, qkv_format: str) -> Batch:
     )
 
 
-def run_reference(reference: GPTModel, batch: Batch) -> torch.Tensor:
+def run_reference_loss(reference: GPTModel, batch: Batch) -> torch.Tensor:
     """Run ``GPTModel``, which computes the logits and the loss at every position."""
     return reference(
         batch.input_ids,
@@ -168,7 +181,7 @@ def calc_loss_at_targets(model: SpeechLanguageModel, batch: Batch) -> torch.Tens
 def calc_reference_loss(reference: GPTModel, batch: Batch) -> torch.Tensor:
     """Calculate the reference loss ``[batch, sequence]`` without gradients."""
     with torch.no_grad():
-        return run_reference(reference, batch)
+        return run_reference_loss(reference, batch)
 
 
 @pytest.fixture(name="model_loss")
@@ -181,7 +194,7 @@ def calc_model_loss(model: SpeechLanguageModel, batch: Batch) -> torch.Tensor:
 @pytest.fixture(name="reference_gradients")
 def calc_reference_gradients(reference: GPTModel, batch: Batch) -> dict[str, torch.Tensor | None]:
     """Calculate the reference gradients of the loss summed with ``loss_mask``, by parameter."""
-    (run_reference(reference, batch) * batch.loss_mask).sum().backward()
+    (run_reference_loss(reference, batch) * batch.loss_mask).sum().backward()
     return {name: param.grad for name, param in reference.named_parameters()}
 
 
@@ -288,3 +301,134 @@ def test_returns_gpt_model_loss_without_loss_mask(
     error = calc_relative_error(actual, reference_loss)
     logger.info("%s: loss without loss mask max relative error %.2e", dtype, error)
     assert error < TOLERANCES[dtype]
+
+
+def run_reference_last_layer(reference: GPTModel, batch: Batch) -> torch.Tensor:
+    """Return the reference's last layer output, this rank's part under sequence parallelism."""
+    return reference(
+        batch.input_ids,
+        batch.position_ids,
+        None,
+        packed_seq_params=batch.packed_seq_params,
+        output_processor=lambda hidden_states, **_: hidden_states,
+    )
+
+
+def calc_multi_stream_output(model: MultiStreamLanguageModel, batch: Batch) -> torch.Tensor:
+    """Return the output of the last layer of the model under test."""
+    return model(
+        batch.input_ids, batch.position_ids, None, packed_seq_params=batch.packed_seq_params
+    )
+
+
+def calc_multi_stream_target_loss(model: MultiStreamLanguageModel, batch: Batch) -> torch.Tensor:
+    """Calculate the loss ``[batch, sequence]`` with ``calc_target_loss`` on the model's output."""
+    return model.calc_target_loss(
+        calc_multi_stream_output(model, batch), batch.labels, batch.loss_mask
+    )
+
+
+@pytest.mark.parametrize("target_pattern", ["some"])
+def test_multi_stream_output_matches_gpt_model(
+    multi_stream_model: MultiStreamLanguageModel,
+    reference: GPTModel,
+    batch: Batch,
+    dtype: torch.dtype,
+    sequence_parallel: bool,
+) -> None:
+    """Check that every rank gets the whole output of ``GPTModel``'s last layer."""
+    with torch.no_grad():
+        output = calc_multi_stream_output(multi_stream_model, batch)
+        reference_output = run_reference_last_layer(reference, batch)
+    batch_size, sequence_length = batch.input_ids.shape
+    assert output.shape == (sequence_length, batch_size, reference_output.size(-1))
+    # Under sequence parallelism, the reference holds this rank's part of the sequence.
+    rank_output = take_shard(output, 0 if sequence_parallel else None)
+    error = calc_relative_error(rank_output, reference_output)
+    logger.info("%s: last layer output max relative error %.2e", dtype, error)
+    assert error < TOLERANCES[dtype]
+
+
+@pytest.mark.parametrize("target_pattern", ["some"])
+def test_multi_stream_output_gradients_match_gpt_model(
+    multi_stream_model: MultiStreamLanguageModel,
+    reference: GPTModel,
+    batch: Batch,
+    dtype: torch.dtype,
+    sequence_parallel: bool,
+) -> None:
+    """Check that a weighted sum of the output gives every parameter ``GPTModel``'s gradient.
+
+    Under sequence parallelism, the reference sums only this rank's part of the output.
+    """
+    output = calc_multi_stream_output(multi_stream_model, batch)
+    torch.manual_seed(2)
+    output_weights = torch.randn(output.shape).cuda()
+    (output.float() * output_weights).sum().backward()
+    reference_output = run_reference_last_layer(reference, batch)
+    rank_output_weights = take_shard(output_weights, 0 if sequence_parallel else None)
+    (reference_output * rank_output_weights).sum().backward()
+    reference_gradients = dict(reference.named_parameters())
+    errors = {
+        name: calc_relative_error(param.grad, reference_gradients[name].grad)
+        for name, param in multi_stream_model.named_parameters()
+    }
+    logger.info(
+        "%s: gradient max relative error for the output %s",
+        dtype,
+        ", ".join(f"{name} {error:.2e}" for name, error in errors.items()),
+    )
+    assert max(errors.values()) < TOLERANCES[dtype], errors
+
+
+@WITH_TARGETS
+def test_multi_stream_target_loss_matches_gpt_model(
+    multi_stream_model: MultiStreamLanguageModel,
+    reference_loss: torch.Tensor,
+    batch: Batch,
+    dtype: torch.dtype,
+) -> None:
+    """Check that ``calc_target_loss`` on the output gives ``GPTModel``'s loss at the targets."""
+    with torch.no_grad():
+        loss = calc_multi_stream_target_loss(multi_stream_model, batch)
+    target_mask = batch.loss_mask.bool()
+    error = calc_relative_error(loss[target_mask], reference_loss[target_mask])
+    logger.info("%s: loss from the last layer output max relative error %.2e", dtype, error)
+    assert error < TOLERANCES[dtype]
+
+
+@WITH_TARGETS
+def test_multi_stream_target_loss_gradients_match_gpt_model(
+    multi_stream_model: MultiStreamLanguageModel,
+    reference_gradients: dict[str, torch.Tensor | None],
+    batch: Batch,
+    dtype: torch.dtype,
+) -> None:
+    """Check that the masked loss from ``calc_target_loss`` gives ``GPTModel``'s gradients."""
+    (calc_multi_stream_target_loss(multi_stream_model, batch) * batch.loss_mask).sum().backward()
+    errors = {
+        name: calc_relative_error(param.grad, reference_gradients[name])
+        for name, param in multi_stream_model.named_parameters()
+    }
+    logger.info(
+        "%s: gradient max relative error for the loss %s",
+        dtype,
+        ", ".join(f"{name} {error:.2e}" for name, error in errors.items()),
+    )
+    assert max(errors.values()) < TOLERANCES[dtype], errors
+
+
+@pytest.mark.parametrize("target_pattern", ["some"])
+@pytest.mark.parametrize("target_argument", ["labels", "loss_mask"])
+def test_multi_stream_model_rejects_targets(
+    multi_stream_model: MultiStreamLanguageModel, batch: Batch, target_argument: str
+) -> None:
+    """Check that ``labels`` or ``loss_mask`` in the call raises ValueError."""
+    with pytest.raises(ValueError, match="calc_target_loss"):
+        multi_stream_model(
+            batch.input_ids,
+            batch.position_ids,
+            None,
+            packed_seq_params=batch.packed_seq_params,
+            **{target_argument: getattr(batch, target_argument)},
+        )
