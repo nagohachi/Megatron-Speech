@@ -79,6 +79,13 @@ def test_positions_restart_in_each_segment(batch: PackedSpeechBatch) -> None:
         assert torch.equal(batch.position_ids[0, start:end], torch.arange(end - start))
 
 
+def test_build_without_padding_joins_utterances() -> None:
+    """Check that with ``pad_to_multiple`` 1, the row is the tokens of the utterances, joined."""
+    batch = PackedSpeechBatch.build(EXAMPLES, 1, PAD_TOKEN_ID)
+    assert batch.cu_seqlens.tolist() == [0, 5, 13, 26]
+    assert torch.equal(batch.input_ids[0], torch.cat([example.input_ids for example in EXAMPLES]))
+
+
 def test_build_rejects_pad_to_multiple_below_one() -> None:
     """Check that a ``pad_to_multiple`` below 1 is rejected with its name."""
     with pytest.raises(ValueError, match="pad_to_multiple"):
