@@ -38,8 +38,10 @@ class MultiStreamMimoModel(MimoModel):
     ) -> None:
         """Build the modules of ``mimo_config`` and the audio decoder of ``audio_decoder_spec``.
 
-        The LLM of ``mimo_config`` must be a ``MultiStreamLanguageModel``. ``tp_group`` is the
-        LLM's tensor parallel group, which ``MimoModel`` needs for sequence parallelism.
+        The LLM of ``mimo_config`` must be a ``MultiStreamLanguageModel``, and the ``params`` of
+        ``language_model_spec`` hold its ``config``, which ``MimoModel`` reads as well.
+        ``tp_group`` is the LLM's tensor parallel group, which ``MimoModel`` needs for sequence
+        parallelism.
         """
         language_model_spec = mimo_config.language_model_spec
         language_model_class = language_model_spec.module
