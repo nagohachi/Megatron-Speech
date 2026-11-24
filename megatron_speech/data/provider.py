@@ -16,7 +16,7 @@ from megatron_speech.data.sampling import TokenBucketingConfig, build_token_buck
 class AudioTextDataConfig:
     """Data of the training of a speech LLM and the settings of its micro-batches."""
 
-    # Directories of lhotse Shar shards, as written by ``python -m megatron_speech.data.shar``.
+    # Directories of lhotse Shar shards.
     train_shar_dirs: list[Path]
     # Without directories, there is no validation.
     valid_shar_dirs: list[Path]
