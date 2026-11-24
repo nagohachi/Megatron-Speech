@@ -94,7 +94,7 @@ class MappingBridge(MegatronModelBridge):
         path
             Directory to write.
         """
-        is_writer = torch.distributed.get_rank() == 0
+        rank = torch.distributed.get_rank()
 
         def stream_weights() -> Iterator[tuple[str, torch.Tensor]]:
             """Yield the models' weights, then on rank 0 the other weights of ``checkpoint``."""
@@ -104,12 +104,12 @@ class MappingBridge(MegatronModelBridge):
             ):
                 converted_names.add(name)
                 yield name, tensor
-            if is_writer:
+            if rank == 0:
                 for name in checkpoint.state:
                     if name not in converted_names:
                         yield name, checkpoint.state[name]
 
-        if is_writer:
+        if rank == 0:
             path.mkdir(parents=True, exist_ok=True)
             for source_file in checkpoint.model_name_or_path.iterdir():
                 # save_generator writes the safetensors files and, for a sharded checkpoint, an
