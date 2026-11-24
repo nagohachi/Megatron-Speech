@@ -38,11 +38,7 @@ class TextStreamBuilder:
     frames, and the next part is shifted back by as many frames. Kyutai's moshi-finetune gives
     this setting the same name and trains with False; J-Moshi places the tokens as True does.
 
-    - ``frames_per_second``: frame rate of the audio codec, 12.5 for Moshi's Mimi.
-    - ``padding_id``: token of a frame without text.
-    - ``end_of_padding_id``: token of the last frame without text before a part.
-    - ``keep_and_shift``: True keeps the tokens that do not fit and shifts the next part
-      back; False drops them.
+    ``frames_per_second`` is the frame rate of the audio codec, 12.5 for Moshi's Mimi.
 
     For example, at 12.5 frames per second, "Hello" (tokens Hel and lo) starts at 0.10 s,
     "there" (one token) at 0.20 s and "how" (one token) at 0.42 s. Only frame 1 is left for
