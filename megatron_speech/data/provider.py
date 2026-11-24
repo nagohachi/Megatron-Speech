@@ -22,7 +22,7 @@ class AudioTextDataConfig:
     valid_shar_dirs: list[Path]
     token_bucketing: TokenBucketingConfig
     # Number of worker processes on each rank, in which the audio is loaded and packed.
-    num_workers: int = 4
+    num_workers: int = 1
 
 
 class AudioTextDatasetsProvider:
