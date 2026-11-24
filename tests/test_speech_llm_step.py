@@ -55,7 +55,7 @@ class TrainingStepOutputs:
 
 def build_config(dtype: torch.dtype) -> SpeechLLMConfig:
     """Build a small speech LLM config whose loss is averaged over the target tokens."""
-    transformer = TransformerConfig(
+    transformer_config = TransformerConfig(
         num_layers=2,
         hidden_size=64,
         num_attention_heads=4,
@@ -68,7 +68,7 @@ def build_config(dtype: torch.dtype) -> SpeechLLMConfig:
     )
     return SpeechLLMConfig(
         llm=GPTModelConfig(
-            transformer=transformer,
+            transformer=transformer_config,
             vocab_size=VOCAB_SIZE,
             seq_length=1024,
             share_embeddings_and_output_weights=True,
