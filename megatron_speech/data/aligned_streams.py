@@ -68,8 +68,21 @@ class AlignedStreams:
     def take_frames(self, frames: range) -> Self:
         """Return every stream at ``frames`` only, such as one window of the recording.
 
-        ``frames`` is a range of consecutive frames of the recording, as ``WindowSplitter.split``
-        returns; a step other than 1, or frames outside the recording, raise ValueError.
+        Parameters
+        ----------
+        frames
+            Consecutive frames of the recording (a step of 1), such as a window that
+            ``WindowSplitter.split`` returns.
+
+        Returns
+        -------
+        Self
+            The streams whose values and masks hold only the frames of ``frames``.
+
+        Raises
+        ------
+        ValueError
+            If ``frames`` has a step other than 1 or reaches outside the recording.
         """
         if frames.step != 1:
             raise ValueError(f"take_frames takes consecutive frames, got a step of {frames.step}")
@@ -123,7 +136,19 @@ class WindowSplitter:
             )
 
     def split(self, num_frames: int) -> list[range]:
-        """Return the frames of each window of a recording of ``num_frames`` frames, in order."""
+        """Return the frames of each window of a recording, in order.
+
+        Parameters
+        ----------
+        num_frames
+            Number of frames of the recording.
+
+        Returns
+        -------
+        list[range]
+            Frames of each window, numbered as the frames of the recording, which
+            ``AlignedStreams.take_frames`` takes.
+        """
         if self.split_evenly:
             num_windows = math.ceil(num_frames / self.max_num_frames)
             # As numpy.array_split: the first num_frames % num_windows windows are one longer.
