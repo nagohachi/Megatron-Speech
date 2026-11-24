@@ -340,6 +340,14 @@ def test_rejects_pipeline_parallelism(config: SpeechLLMConfig) -> None:
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 
+def test_rejects_context_parallelism(config: SpeechLLMConfig) -> None:
+    """Check that context parallelism, which the speech LLM does not support, raises ValueError."""
+    transformer = replace(config.llm.transformer, context_parallel_size=2)
+    config = replace(config, llm=replace(config.llm, transformer=transformer))
+    with pytest.raises(ValueError, match="context_parallel_size=1"):
+        build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
+
+
 def test_rejects_llm_without_vocab_size(config: SpeechLLMConfig) -> None:
     """Check that an LLM config without a vocabulary size raises ValueError."""
     config = replace(config, llm=replace(config.llm, vocab_size=None))
