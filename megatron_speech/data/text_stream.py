@@ -23,19 +23,20 @@ class TimedTokens:
 
 @dataclass
 class TextStreamBuilder:
-    """Rule that places timed text tokens on the frames of the audio, one token per frame.
+    """Builder of the text that Moshi and similar models read, one token per audio frame.
 
-    The tokens of a ``TimedTokens`` start at the frame that holds its ``start_time``, the
-    frames without a token get ``padding_id``, and the frame right before a token after
-    padding gets ``end_of_padding_id``.
+    These models read one text token at each frame of the audio, together with the audio of
+    that frame. ``build`` makes this text from the words of a transcript and the times when
+    they are spoken. The tokens of a word go on the frames from the one in which the word
+    starts, and the frames without a word get ``padding_id``. The last of these padding frames
+    before a word gets ``end_of_padding_id`` instead, which marks that a word starts next.
 
     - ``frames_per_second``: frame rate of the audio codec, 12.5 for Moshi's Mimi.
     - ``padding_id``: token of a frame without text (Moshi's PAD).
     - ``end_of_padding_id``: token of the last frame of padding before text (Moshi's EPAD).
-    - ``leftover_tokens``: what happens to the tokens of one ``TimedTokens`` that are not
-      placed yet at the start frame of the next. ``"drop"`` drops them, as Kyutai's
-      moshi-finetune does; ``"delay"`` places them on the next frames, before the next
-      tokens, as J-Moshi does.
+    - ``leftover_tokens``: what to do when a word has tokens left at the frame where the next
+      word starts. ``"drop"`` drops the rest of the word, as Kyutai's moshi-finetune does;
+      ``"delay"`` places the rest first and the next word after it, as J-Moshi does.
     """
 
     frames_per_second: float
