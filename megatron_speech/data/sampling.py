@@ -96,7 +96,7 @@ def build_token_bucketing_sampler(
     world_size: int,
     cuts_for_bins_estimate: CutSet | None = None,
 ) -> DynamicBucketingSampler:
-    """Build a sampler of micro-batches of utterances of similar token counts.
+    """Build the sampler that puts utterances of similar token counts into micro-batches.
 
     Parameters
     ----------

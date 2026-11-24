@@ -31,7 +31,7 @@ UTTERANCE_LENGTHS = [8000 + 397 * index for index in range(40)]
 
 
 class CharExampleBuilder(AudioTextExampleBuilder):
-    """Builder of examples of one audio token per 0.1 s, then one token per transcript character."""
+    """Builder of the examples of these tests: an audio token per 0.1 s, a token per character."""
 
     sampling_rate = SAMPLING_RATE
     pad_token_id = 0

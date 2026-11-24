@@ -10,7 +10,10 @@ from megatron_speech.data.packing import AudioTextExample, PackedAudioTextBatch
 
 
 class AudioTextExampleBuilder(ABC):
-    """Base class of the builders of ``AudioTextExample``; one is written for each prompt format."""
+    """Base class of the builders that turn an utterance into the input of a speech LLM.
+
+    One subclass is written for each prompt format.
+    """
 
     @property
     @abstractmethod
@@ -32,16 +35,17 @@ class AudioTextExampleBuilder(ABC):
 
 
 def _read_transcript(cut: Cut) -> str:
-    """Return the text of the only supervision of ``cut``."""
+    """Return the transcript of ``cut``, the text of its only supervision."""
     if len(cut.supervisions) != 1:
         raise ValueError(f"cut {cut.id} has {len(cut.supervisions)} supervisions instead of one")
     return cut.supervisions[0].text
 
 
 class AudioTextDataset(torch.utils.data.Dataset):
-    """Dataset that is indexed by the cuts of a micro-batch, as they are given by lhotse's samplers.
+    """Dataset of the data loaders that turns the utterances of a micro-batch into a packed row.
 
-    Audio at another sampling rate is resampled to that of ``example_builder``.
+    It is indexed by the cuts (``CutSet``) of a micro-batch, as they are chosen by lhotse's
+    samplers. Audio at another sampling rate is resampled to that of ``example_builder``.
     """
 
     def __init__(self, example_builder: AudioTextExampleBuilder, pad_to_multiple: int) -> None:
@@ -63,7 +67,9 @@ class AudioTextDataset(torch.utils.data.Dataset):
         )
 
     def calc_num_tokens(self, cut: Cut) -> int:
-        """Count the tokens that ``cut`` takes in a packed row, with its padding.
+        """Count the tokens of ``cut`` in a packed row; micro-batches are limited by this count.
+
+        The padding of ``cut`` is counted.
 
         Only the duration and the transcript are read, without the audio.
         """

@@ -15,7 +15,7 @@ from megatron_speech.data.sampling import TokenBucketingConfig, build_token_buck
 
 @dataclass
 class AudioTextDataConfig:
-    """Data of the training of a speech LLM and the settings of its micro-batches."""
+    """Settings of the training and validation data of a speech LLM, read by the provider."""
 
     # Directories of lhotse Shar shards.
     train_shar_dirs: list[Path]
@@ -44,10 +44,11 @@ def _list_shar_fields(shar_dirs: list[Path]) -> dict[str, list[Path]]:
 
 
 class AudioTextDatasetsProvider:
-    """Datasets provider of ``megatron.training.pretrain`` for ``--dataloader-type external``.
+    """Provider of the micro-batches that Megatron's training loop is given on every rank.
 
-    Data loaders are built on each rank, and the ranks of one data parallel group are given the
-    same micro-batches. A micro-batch is one packed row, so ``--micro-batch-size`` is 1.
+    It is passed to ``megatron.training.pretrain`` for ``--dataloader-type external``. Data
+    loaders are built on each rank, and the ranks of one data parallel group are given the same
+    micro-batches. A micro-batch is one packed row, so ``--micro-batch-size`` is 1.
     """
 
     # The provider is called on every rank, not only on the first tensor parallel rank.
@@ -147,7 +148,7 @@ class AudioTextDatasetsProvider:
     def iterate_evaluations(
         self, loader: Iterable[PackedAudioTextBatch]
     ) -> Iterator[PackedAudioTextBatch]:
-        """Yield the same first micro-batches of ``loader`` at every evaluation.
+        """Yield the validation micro-batches of ``loader``, the same ones at every evaluation.
 
         An evaluation takes ``num_microbatches_per_evaluation`` micro-batches; when ``loader``
         has fewer, it is read again from the start within the evaluation.
@@ -166,7 +167,7 @@ class AudioTextDatasetsProvider:
     def __call__(
         self, train_valid_test_num_samples: tuple[int, int | None, int]
     ) -> tuple[Iterator[PackedAudioTextBatch], Iterator[PackedAudioTextBatch] | None, None]:
-        """Build the iterators of the micro-batches of this rank.
+        """Build the train and validation iterators of this rank, when Megatron starts training.
 
         ``train_valid_test_num_samples`` is not used: the train micro-batches have no end, and
         the number of validation micro-batches depends on the lengths of the utterances.
