@@ -1,3 +1,5 @@
+import shutil
+from collections.abc import Iterator
 from pathlib import Path
 
 import torch
@@ -5,10 +7,30 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
 from megatron.core.transformer import MegatronModule
 
 # Files of a Hugging Face checkpoint besides the weights: config, tokenizer, processor.
 NON_WEIGHT_FILES = ["*.json", "*.txt", "*.jinja"]
+# Index of the weights of a checkpoint sharded over several safetensors files.
+SAFETENSORS_INDEX_FILE = "model.safetensors.index.json"
+
+
+class SafeTensorsCheckpoint:
+    """Checkpoint directory of safetensors files that transformers cannot load.
+
+    Kyutai's Moshi checkpoints, for example, have no config.json. ``MappingBridge`` takes this
+    class where it takes Megatron-Bridge's ``PreTrainedCausalLM``, which loads the config with
+    transformers. The weights are those of every safetensors file in the directory. Without a
+    config that gives the vocabulary size, the export keeps the rows that Megatron adds to pad
+    the vocabulary.
+    """
+
+    def __init__(self, path: Path) -> None:
+        """Index the weights of the safetensors files in ``path``; a tensor loads when read."""
+        # The attributes of a Hugging Face checkpoint that Megatron-Bridge's conversion reads.
+        self.model_name_or_path = path
+        self.state = StateDict(SafeTensorsStateSource(path))
 
 
 class MappingBridge(MegatronModelBridge):
@@ -19,7 +41,8 @@ class MappingBridge(MegatronModelBridge):
     - Loading: the base class's ``load_weights_hf_to_megatron`` reads Hugging Face weights
       into a model that Megatron-Speech builds.
     - Writing back: the base class's ``stream_weights_megatron_to_hf``, and
-      ``save_hf_checkpoint`` for a whole checkpoint directory.
+      ``save_hf_checkpoint`` and ``save_safetensors_checkpoint`` for a whole checkpoint
+      directory.
     - Tensor parallelism: the mappings split the weights over the ranks and gather them back.
     """
 
@@ -50,4 +73,52 @@ class MappingBridge(MegatronModelBridge):
         hf_pretrained.state.source.save_generator(
             self.stream_weights_megatron_to_hf(models, hf_pretrained, show_progress=False), path
         )
+        torch.distributed.barrier()
+
+    def save_safetensors_checkpoint(
+        self, models: list[MegatronModule], checkpoint: SafeTensorsCheckpoint, path: Path
+    ) -> None:
+        """Write ``models`` in ``path``, laid out as ``checkpoint``.
+
+        Every rank calls this, as ``save_hf_checkpoint``; rank 0 writes the files.
+
+        Parameters
+        ----------
+        models
+            Models whose parameters the mappings write.
+        checkpoint
+            Checkpoint whose files ``path`` gets. The weights that the mappings write take the
+            models' values; the other weights, such as those of a codec that the models do not
+            hold, are copied from ``checkpoint``, and so are the files besides the safetensors
+            files and their index.
+        path
+            Directory to write.
+        """
+        rank = torch.distributed.get_rank()
+
+        def stream_weights() -> Iterator[tuple[str, torch.Tensor]]:
+            """Yield the models' weights, then on rank 0 the other weights of ``checkpoint``."""
+            converted_names = set()
+            for name, tensor in self.stream_weights_megatron_to_hf(
+                models, checkpoint, show_progress=False
+            ):
+                converted_names.add(name)
+                yield name, tensor
+            if rank == 0:
+                for name in checkpoint.state:
+                    if name not in converted_names:
+                        yield name, checkpoint.state[name]
+
+        if rank == 0:
+            path.mkdir(parents=True, exist_ok=True)
+            for source_file in checkpoint.model_name_or_path.iterdir():
+                # save_generator writes the safetensors files and, for a sharded checkpoint, an
+                # index of the files that it writes.
+                if (
+                    source_file.is_file()
+                    and source_file.suffix != ".safetensors"
+                    and source_file.name != SAFETENSORS_INDEX_FILE
+                ):
+                    shutil.copy2(source_file, path / source_file.name)
+        checkpoint.state.source.save_generator(stream_weights(), path)
         torch.distributed.barrier()
