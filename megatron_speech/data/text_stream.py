@@ -70,9 +70,25 @@ class TextStreamBuilder:
     def build(self, timed_tokens: list[TimedTokens], num_frames: int) -> torch.Tensor:
         """Make the text for ``num_frames`` frames of audio from the parts in ``timed_tokens``.
 
-        Return the ``[num_frames]`` token ids, one for each frame. The parts are placed in the
-        order of their start times. The tokens that do not fit before the last frame are
-        dropped. A start time before 0 raises ValueError.
+        The parts are placed in the order of their start times, and the tokens that do not fit
+        before the last frame are dropped.
+
+        Parameters
+        ----------
+        timed_tokens
+            Parts of the transcript, in any order.
+        num_frames
+            Number of audio frames that the text covers.
+
+        Returns
+        -------
+        torch.Tensor
+            ``[num_frames]`` int64 token ids, one for each frame.
+
+        Raises
+        ------
+        ValueError
+            If a part starts before 0 seconds.
         """
         ordered_timed_tokens = sorted(timed_tokens, key=lambda token_group: token_group.start_time)
         start_frames = [
