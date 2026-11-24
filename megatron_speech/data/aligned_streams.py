@@ -56,7 +56,13 @@ class AlignedStreams:
         return next(iter(self.streams.values())).values.size(0)
 
     def take_frames(self, frames: range) -> Self:
-        """Return every stream at ``frames`` only, such as one window of the recording."""
+        """Return every stream at ``frames`` only, such as one window of the recording.
+
+        ``frames`` is a range of consecutive frames, as ``WindowSplitter.split`` returns; a step
+        other than 1 raises ValueError.
+        """
+        if frames.step != 1:
+            raise ValueError(f"take_frames takes consecutive frames, got a step of {frames.step}")
         window = slice(frames.start, frames.stop)
         return type(self)(
             {

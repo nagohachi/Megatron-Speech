@@ -49,6 +49,12 @@ def test_takes_frames_of_every_stream(streams: AlignedStreams) -> None:
         assert torch.equal(stream.present_frame_mask, mask), name
 
 
+def test_rejects_frames_with_a_step(streams: AlignedStreams) -> None:
+    """Check that a range of frames with a step other than 1 raises ValueError."""
+    with pytest.raises(ValueError, match="consecutive frames, got a step of 2"):
+        streams.take_frames(range(0, NUM_FRAMES, 2))
+
+
 def test_rejects_streams_of_different_lengths() -> None:
     """Check that streams with different numbers of frames raise ValueError."""
     with pytest.raises(ValueError, match="different numbers of frames"):
