@@ -13,3 +13,10 @@ class CorpusRecipe(ABC):
 
         ``num_jobs`` is the number of processes or threads that the recipe may use.
         """
+
+    @abstractmethod
+    def normalize_transcript(self, transcript: str) -> str:
+        """Return ``transcript`` in the form that models trained on this corpus learn to write.
+
+        The transcripts are normalized with it when the shards are written.
+        """
