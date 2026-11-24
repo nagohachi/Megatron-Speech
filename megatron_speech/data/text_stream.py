@@ -8,10 +8,13 @@ import torch
 
 @dataclass
 class TimedTokens:
-    """Text tokens that start at one time of the audio, such as the tokens of one word.
+    """One word of a transcript, as its tokens and the time in the audio when it is spoken.
 
-    - ``token_ids``: the tokens, placed on consecutive frames in this order.
-    - ``start_time``: seconds from the start of the audio to the start of the first token.
+    ``TextStreamBuilder`` takes a list of these. A word can also be split into parts, each with
+    its own time, such as one part for each token.
+
+    - ``token_ids``: the tokens of the word, in order.
+    - ``start_time``: seconds from the start of the audio to the start of the word.
     """
 
     token_ids: list[int]
