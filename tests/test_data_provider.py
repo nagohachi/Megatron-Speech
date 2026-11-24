@@ -18,13 +18,11 @@ from megatron_speech.data.sampling import TokenBucketingConfig
 SAMPLING_RATE = 16000
 SAMPLES_PER_AUDIO_TOKEN = 1600
 PAD_TO_MULTIPLE = 4
-# The train cuts have no end; with the default buffer of 20000 cuts, the 40 utterances would be
-# read 500 times before the first micro-batch.
+# A small buffer, so that the endless train cuts are not read many times before a micro-batch.
 TOKEN_BUCKETING_CONFIG = TokenBucketingConfig(
     max_tokens_per_batch=100, max_tokens_per_example=60, num_buckets=3, buffer_size=50
 )
-# At about 4 utterances per micro-batch, about 6 reads of the 40 utterances. An utterance can
-# wait in the buffer while other buckets are sampled, and 30 micro-batches missed one.
+# Enough train micro-batches for each rank to read every utterance.
 NUM_TRAIN_BATCHES = 60
 # Lengths of the utterances in samples. They all differ, so that a waveform tells its utterance.
 UTTERANCE_LENGTHS = [8000 + 397 * index for index in range(40)]
