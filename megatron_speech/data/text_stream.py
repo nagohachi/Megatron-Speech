@@ -39,6 +39,14 @@ class TextStreamBuilder:
     - ``leftover_tokens``: what to do when a part has tokens left at the frame where the next
       part starts. ``"drop"`` drops the rest of the part, as Kyutai's moshi-finetune does;
       ``"delay"`` places the rest first and the next part after it, as J-Moshi does.
+
+    Three parts, A with the tokens a1 a2 a3, B with b1 and C with c1, start in the frames
+    below and give these texts::
+
+        frame               0     1    2    3    4     5    6
+        part that starts          A    B               C
+        text of "drop"      EPAD  a1   b1   PAD  EPAD  c1   PAD
+        text of "delay"     EPAD  a1   a2   a3   b1    c1   PAD
     """
 
     frames_per_second: float

@@ -32,6 +32,13 @@ OVERLAPPING_TOKENS = [
     TimedTokens(token_ids=[15], start_time=calc_start_time(5)),
     TimedTokens(token_ids=[16], start_time=calc_start_time(5)),
 ]
+# The example in the docstring of TextStreamBuilder: A (10, 11, 12) starts in frame 1, B (13)
+# in frame 2 and C (14) in frame 5.
+DOCSTRING_EXAMPLE_TOKENS = [
+    TimedTokens(token_ids=[10, 11, 12], start_time=calc_start_time(1)),
+    TimedTokens(token_ids=[13], start_time=calc_start_time(2)),
+    TimedTokens(token_ids=[14], start_time=calc_start_time(5)),
+]
 # Tokens of a word, then a word with no tokens, such as one that the tokenizer drops.
 TOKENS_BEFORE_EMPTY_WORD = [
     TimedTokens(token_ids=[10, 11, 12], start_time=calc_start_time(1)),
@@ -84,6 +91,18 @@ def test_drops_tokens_delayed_past_last_frame(builder: TextStreamBuilder) -> Non
     """Check that the tokens that the delay pushes past the last frame are dropped."""
     stream = builder.build(OVERLAPPING_TOKENS, num_frames=7)
     assert stream.tolist() == [EPAD, 10, 11, 12, 13, 14, 15]
+
+
+@pytest.mark.parametrize(
+    ("leftover_tokens", "expected_stream"),
+    [
+        ("drop", [EPAD, 10, 13, PAD, EPAD, 14, PAD]),
+        ("delay", [EPAD, 10, 11, 12, 13, 14, PAD]),
+    ],
+)
+def test_matches_docstring_example(builder: TextStreamBuilder, expected_stream: list[int]) -> None:
+    """Check that the builder gives the texts that the docstring of ``TextStreamBuilder`` shows."""
+    assert builder.build(DOCSTRING_EXAMPLE_TOKENS, num_frames=7).tolist() == expected_stream
 
 
 @WITH_LEFTOVER_RULES
