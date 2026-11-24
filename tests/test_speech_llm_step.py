@@ -49,7 +49,11 @@ WITH_PARALLELISMS = pytest.mark.parametrize("parallelism", ["data", "tensor"], s
 
 @dataclass
 class TrainingStepOutputs:
-    """Mean loss over the target tokens of a training step, and the gradients by parameter name."""
+    """Loss and gradients of a training step, compared in the tests with those of the reference.
+
+    The loss is the mean over the target tokens of the step. The gradients are keyed by the names
+    of the parameters.
+    """
 
     loss: torch.Tensor
     gradients: dict[str, torch.Tensor]
