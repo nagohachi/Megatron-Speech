@@ -73,6 +73,7 @@ class SpeechLLMForwardStep:
             return summed_loss, num_target_tokens, report
 
         batch = next(data_iterator)
+        # Every micro-batch has audio, since each AudioTextExample holds a waveform.
         mels = self.log_mel.cuda()([waveform.cuda() for waveform in batch.waveforms])
         encoder_inputs = Qwen3ASREncoderInputs.build(mels, self.encoder_config).to("cuda")
         encoder_kwargs = {
