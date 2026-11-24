@@ -6,11 +6,7 @@ from lhotse import CutSet
 from lhotse.cut import Cut
 from lhotse.utils import compute_num_samples
 
-from megatron_speech.data.packing import (
-    AudioTextExample,
-    PackedAudioTextBatch,
-    calc_segment_length,
-)
+from megatron_speech.data.packing import AudioTextExample, PackedAudioTextBatch
 
 
 class AudioTextExampleBuilder(ABC):
@@ -72,7 +68,7 @@ class AudioTextDataset(torch.utils.data.Dataset):
         Only the duration and the transcript are read, without the audio.
         """
         num_samples = compute_num_samples(cut.duration, self.example_builder.sampling_rate)
-        return calc_segment_length(
+        return PackedAudioTextBatch.calc_segment_length(
             self.example_builder.calc_num_tokens(num_samples, _read_transcript(cut)),
             self.pad_to_multiple,
         )
