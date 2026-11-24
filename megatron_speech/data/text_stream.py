@@ -1,7 +1,6 @@
 import math
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import Literal
 
 import torch
 
@@ -36,32 +35,29 @@ class TextStreamBuilder:
     - ``frames_per_second``: frame rate of the audio codec, 12.5 for Moshi's Mimi.
     - ``padding_id``: token of a frame without text (Moshi's PAD).
     - ``end_of_padding_id``: token of the last frame of padding before text (Moshi's EPAD).
-    - ``leftover_tokens``: what to do when a part has tokens left at the frame where the next
-      part starts. ``"drop"`` drops the rest of the part, as Kyutai's moshi-finetune does;
-      ``"delay"`` places the rest first and the next part after it, as J-Moshi does.
+    - ``keep_and_shift``: what to do when a part has tokens left at the frame where the next
+      part starts. False drops the rest of the part; True keeps it, placing it first and
+      shifting the next part back. Kyutai's moshi-finetune gives this setting the same name
+      and trains with False; J-Moshi places the tokens as True does.
 
     Three parts, A with the tokens a1 a2 a3, B with b1 and C with c1, start in the frames
     below and give these texts::
 
-        frame               0     1    2    3    4     5    6
-        part that starts          A    B               C
-        text of "drop"      EPAD  a1   b1   PAD  EPAD  c1   PAD
-        text of "delay"     EPAD  a1   a2   a3   b1    c1   PAD
+        frame                 0     1    2    3    4     5    6
+        part that starts            A    B               C
+        keep_and_shift=False  EPAD  a1   b1   PAD  EPAD  c1   PAD
+        keep_and_shift=True   EPAD  a1   a2   a3   b1    c1   PAD
     """
 
     frames_per_second: float
     padding_id: int
     end_of_padding_id: int
-    leftover_tokens: Literal["drop", "delay"]
+    keep_and_shift: bool
 
     def __post_init__(self) -> None:
-        """Check that the frame rate is positive and that ``leftover_tokens`` names a rule."""
+        """Check that the frame rate is positive."""
         if self.frames_per_second <= 0:
             raise ValueError(f"frames_per_second must be positive, got {self.frames_per_second}")
-        if self.leftover_tokens not in ("drop", "delay"):
-            raise ValueError(
-                f'leftover_tokens must be "drop" or "delay", got {self.leftover_tokens!r}'
-            )
 
     def build(self, timed_tokens: list[TimedTokens], num_frames: int) -> torch.Tensor:
         """Make the text for ``num_frames`` frames of audio from the parts in ``timed_tokens``.
@@ -87,7 +83,7 @@ class TextStreamBuilder:
         for token_group, (start_frame, next_start_frame) in zip(
             ordered_timed_tokens, start_frame_pairs, strict=True
         ):
-            if self.leftover_tokens == "delay":
+            if self.keep_and_shift:
                 first_frame, end_frame = max(start_frame, next_frame), num_frames
             else:
                 first_frame, end_frame = start_frame, min(next_start_frame, num_frames)

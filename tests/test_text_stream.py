@@ -1,5 +1,3 @@
-from typing import Literal
-
 import pytest
 import torch
 
@@ -9,8 +7,9 @@ from megatron_speech.data.text_stream import TextStreamBuilder, TimedTokens
 FRAMES_PER_SECOND = 12.5
 PAD = 3
 EPAD = 0
-# Runs a test with each rule for the tokens left at the next start frame.
-WITH_LEFTOVER_RULES = pytest.mark.parametrize("leftover_tokens", ["drop", "delay"])
+# Runs a test with each value of keep_and_shift, which tells what happens to the tokens left
+# at the start frame of the next part.
+WITH_KEEP_AND_SHIFT = pytest.mark.parametrize("keep_and_shift", [False, True])
 
 
 def calc_start_time(frame: int) -> float:
@@ -47,17 +46,17 @@ TOKENS_BEFORE_EMPTY_WORD = [
 
 
 @pytest.fixture(name="builder")
-def build_text_stream_builder(leftover_tokens: Literal["drop", "delay"]) -> TextStreamBuilder:
-    """Build a builder with Moshi's frame rate and tokens and the rule ``leftover_tokens``."""
+def build_text_stream_builder(keep_and_shift: bool) -> TextStreamBuilder:
+    """Build a builder with Moshi's frame rate and tokens and the given ``keep_and_shift``."""
     return TextStreamBuilder(
         frames_per_second=FRAMES_PER_SECOND,
         padding_id=PAD,
         end_of_padding_id=EPAD,
-        leftover_tokens=leftover_tokens,
+        keep_and_shift=keep_and_shift,
     )
 
 
-@WITH_LEFTOVER_RULES
+@WITH_KEEP_AND_SHIFT
 def test_places_tokens_from_start_frames(builder: TextStreamBuilder) -> None:
     """Check that tokens start at their frames, with EPAD only right after padding.
 
@@ -68,7 +67,7 @@ def test_places_tokens_from_start_frames(builder: TextStreamBuilder) -> None:
     assert stream.tolist() == [10, 11, PAD, EPAD, 12, 13, 14, PAD, PAD]
 
 
-@pytest.mark.parametrize("leftover_tokens", ["drop"])
+@pytest.mark.parametrize("keep_and_shift", [False])
 def test_drops_leftover_tokens(builder: TextStreamBuilder) -> None:
     """Check that the tokens not placed by the next start frame are dropped.
 
@@ -79,25 +78,25 @@ def test_drops_leftover_tokens(builder: TextStreamBuilder) -> None:
     assert stream.tolist() == [EPAD, 10, 13, 14, EPAD, 16, PAD]
 
 
-@pytest.mark.parametrize("leftover_tokens", ["delay"])
-def test_delays_leftover_tokens(builder: TextStreamBuilder) -> None:
+@pytest.mark.parametrize("keep_and_shift", [True])
+def test_shifts_leftover_tokens(builder: TextStreamBuilder) -> None:
     """Check that the tokens not placed by the next start frame come before the next tokens."""
     stream = builder.build(OVERLAPPING_TOKENS, num_frames=9)
     assert stream.tolist() == [EPAD, 10, 11, 12, 13, 14, 15, 16, PAD]
 
 
-@pytest.mark.parametrize("leftover_tokens", ["delay"])
-def test_drops_tokens_delayed_past_last_frame(builder: TextStreamBuilder) -> None:
-    """Check that the tokens that the delay pushes past the last frame are dropped."""
+@pytest.mark.parametrize("keep_and_shift", [True])
+def test_drops_tokens_shifted_past_last_frame(builder: TextStreamBuilder) -> None:
+    """Check that the tokens shifted past the last frame are dropped."""
     stream = builder.build(OVERLAPPING_TOKENS, num_frames=7)
     assert stream.tolist() == [EPAD, 10, 11, 12, 13, 14, 15]
 
 
 @pytest.mark.parametrize(
-    ("leftover_tokens", "expected_stream"),
+    ("keep_and_shift", "expected_stream"),
     [
-        ("drop", [EPAD, 10, 13, PAD, EPAD, 14, PAD]),
-        ("delay", [EPAD, 10, 11, 12, 13, 14, PAD]),
+        (False, [EPAD, 10, 13, PAD, EPAD, 14, PAD]),
+        (True, [EPAD, 10, 11, 12, 13, 14, PAD]),
     ],
 )
 def test_matches_docstring_example(builder: TextStreamBuilder, expected_stream: list[int]) -> None:
@@ -105,7 +104,7 @@ def test_matches_docstring_example(builder: TextStreamBuilder, expected_stream: 
     assert builder.build(DOCSTRING_EXAMPLE_TOKENS, num_frames=7).tolist() == expected_stream
 
 
-@WITH_LEFTOVER_RULES
+@WITH_KEEP_AND_SHIFT
 def test_drops_tokens_after_last_frame(builder: TextStreamBuilder) -> None:
     """Check that the tokens past the end of the frames are dropped.
 
@@ -119,21 +118,21 @@ def test_drops_tokens_after_last_frame(builder: TextStreamBuilder) -> None:
     assert stream.tolist() == [PAD, PAD, EPAD, 10, 11]
 
 
-@pytest.mark.parametrize("leftover_tokens", ["drop"])
+@pytest.mark.parametrize("keep_and_shift", [False])
 def test_word_without_tokens_drops_leftover_tokens(builder: TextStreamBuilder) -> None:
     """Check that a word without tokens still drops the leftover tokens of the word before."""
     stream = builder.build(TOKENS_BEFORE_EMPTY_WORD, num_frames=5)
     assert stream.tolist() == [EPAD, 10, PAD, PAD, PAD]
 
 
-@pytest.mark.parametrize("leftover_tokens", ["delay"])
-def test_word_without_tokens_keeps_delayed_tokens(builder: TextStreamBuilder) -> None:
+@pytest.mark.parametrize("keep_and_shift", [True])
+def test_word_without_tokens_keeps_leftover_tokens(builder: TextStreamBuilder) -> None:
     """Check that a word without tokens leaves the tokens of the word before in place."""
     stream = builder.build(TOKENS_BEFORE_EMPTY_WORD, num_frames=5)
     assert stream.tolist() == [EPAD, 10, 11, 12, PAD]
 
 
-@WITH_LEFTOVER_RULES
+@WITH_KEEP_AND_SHIFT
 def test_pads_frames_without_tokens(builder: TextStreamBuilder) -> None:
     """Check that audio without text gets PAD on every frame, as int64 token ids."""
     stream = builder.build([], num_frames=4)
@@ -141,7 +140,7 @@ def test_pads_frames_without_tokens(builder: TextStreamBuilder) -> None:
     assert stream.dtype == torch.int64
 
 
-@WITH_LEFTOVER_RULES
+@WITH_KEEP_AND_SHIFT
 def test_builds_no_frames_for_zero_frames(builder: TextStreamBuilder) -> None:
     """Check that ``num_frames=0`` gives an empty stream of int64 token ids."""
     stream = builder.build(SEPARATE_TOKENS, num_frames=0)
@@ -149,34 +148,23 @@ def test_builds_no_frames_for_zero_frames(builder: TextStreamBuilder) -> None:
     assert stream.dtype == torch.int64
 
 
-@WITH_LEFTOVER_RULES
+@WITH_KEEP_AND_SHIFT
 def test_orders_tokens_by_start_time(builder: TextStreamBuilder) -> None:
     """Check that the tokens are placed in the order of their start times, not of the list."""
     stream = builder.build(SEPARATE_TOKENS[::-1], num_frames=9)
     assert stream.tolist() == [10, 11, PAD, EPAD, 12, 13, 14, PAD, PAD]
 
 
-@WITH_LEFTOVER_RULES
+@WITH_KEEP_AND_SHIFT
 def test_rejects_start_before_audio(builder: TextStreamBuilder) -> None:
     """Check that tokens that start before the audio raise ValueError."""
     with pytest.raises(ValueError, match="before the audio"):
         builder.build([TimedTokens(token_ids=[10], start_time=-0.01)], num_frames=4)
 
 
-def test_rejects_unknown_leftover_rule() -> None:
-    """Check that a rule other than drop and delay raises ValueError when the builder is made."""
-    with pytest.raises(ValueError, match="leftover_tokens must be"):
-        TextStreamBuilder(
-            frames_per_second=FRAMES_PER_SECOND,
-            padding_id=PAD,
-            end_of_padding_id=EPAD,
-            leftover_tokens="shift",  # type: ignore[arg-type]  # a name of no rule, on purpose
-        )
-
-
 def test_rejects_frame_rate_of_zero() -> None:
     """Check that a frame rate of 0 raises ValueError when the builder is made."""
     with pytest.raises(ValueError, match="frames_per_second must be positive"):
         TextStreamBuilder(
-            frames_per_second=0, padding_id=PAD, end_of_padding_id=EPAD, leftover_tokens="drop"
+            frames_per_second=0, padding_id=PAD, end_of_padding_id=EPAD, keep_and_shift=False
         )
