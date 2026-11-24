@@ -94,26 +94,46 @@ def build_token_bucketing_sampler(
     config: TokenBucketingConfig,
     rank: int,
     world_size: int,
+    cuts_for_bins_estimate: CutSet | None = None,
 ) -> DynamicBucketingSampler:
     """Build a sampler of micro-batches of utterances of similar token counts.
 
-    A micro-batch has at most ``config.max_tokens_per_batch`` tokens, counted with
-    ``calc_num_tokens``. ``rank`` and ``world_size`` are those of data parallelism; every rank
-    gets as many micro-batches.
+    Parameters
+    ----------
+    cuts
+        Utterances of the micro-batches.
+    calc_num_tokens
+        Function that counts the tokens of a cut; a micro-batch has at most
+        ``config.max_tokens_per_batch`` of them.
+    config
+        Limits, buckets and order of the micro-batches.
+    rank
+        Data parallel rank whose micro-batches are sampled.
+    world_size
+        Number of data parallel ranks; every rank gets as many micro-batches.
+    cuts_for_bins_estimate
+        Utterances from which the bucket bounds are estimated, ``cuts`` if None. The same
+        utterances without their audio, such as the cuts of Shar manifests alone, keep the
+        audio out of host memory during the estimate.
     """
     constraint = PackedTokenConstraint(
         config.max_tokens_per_batch, calc_num_tokens, [config.max_tokens_per_example]
     )
-    cuts = cuts.filter(constraint.fits)
+    if cuts_for_bins_estimate is None:
+        cuts_for_bins_estimate = cuts
     # The largest token count of each bucket but the last.
     bucket_bounds = [
         int(bound)
         for bound in estimate_duration_buckets(
-            cuts.subset(first=config.num_cuts_for_bins_estimate), config.num_buckets, constraint
+            cuts_for_bins_estimate.filter(constraint.fits).subset(
+                first=config.num_cuts_for_bins_estimate
+            ),
+            config.num_buckets,
+            constraint,
         )
     ]
     return DynamicBucketingSampler(
-        cuts,
+        cuts.filter(constraint.fits),
         constraint=replace(
             constraint, bucket_max_tokens=[*bucket_bounds, config.max_tokens_per_example]
         ),

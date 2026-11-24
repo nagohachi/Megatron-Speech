@@ -134,6 +134,25 @@ def test_ranks_take_every_fitting_utterance(
     assert sorted(sampled_ids) == sorted(fitting_ids)
 
 
+def test_bucket_bounds_come_from_cuts_for_bins_estimate(cuts: CutSet) -> None:
+    """Check that the bucket bounds are estimated from ``cuts_for_bins_estimate`` if given.
+
+    The utterances of 10 to 59 tokens give bounds below 60; those of ``cuts`` go up to 299.
+    """
+    cuts_for_bins_estimate = CutSet.from_cuts(
+        build_cut(index, num_tokens) for index, num_tokens in enumerate(range(10, 60))
+    )
+    sampler = build_token_bucketing_sampler(
+        cuts,
+        calc_num_cut_tokens,
+        TOKEN_BUCKETING_CONFIG,
+        rank=0,
+        world_size=1,
+        cuts_for_bins_estimate=cuts_for_bins_estimate,
+    )
+    assert max(sampler.duration_bins) < 60
+
+
 def test_constraint_closes_batch_before_limit_can_be_passed() -> None:
     """Check that a batch is closed once one more example of its bucket could pass the limit.
 

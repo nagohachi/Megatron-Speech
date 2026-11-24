@@ -87,18 +87,19 @@ class AudioTextDatasetsProvider:
             fields["recording"] += sorted(shar_dir.glob("recording.*.tar"))
         if not fields["cuts"]:
             raise ValueError(f"no Shar shards in {[str(shar_dir) for shar_dir in shar_dirs]}")
-        cuts = CutSet.from_shar(
-            fields=fields,
-            shuffle_shards=token_bucketing_config.shuffle,
-            seed=token_bucketing_config.seed,
-        )
+        shuffle_shards = token_bucketing_config.shuffle
+        seed = token_bucketing_config.seed
         dataset = AudioTextDataset(self.example_builder, self.pad_to_multiple)
         sampler = build_token_bucketing_sampler(
-            cuts,
+            CutSet.from_shar(fields=fields, shuffle_shards=shuffle_shards, seed=seed),
             dataset.calc_num_tokens,
             token_bucketing_config,
             rank=data_parallel_rank,
             world_size=data_parallel_size,
+            # The bucket bounds need only the durations and the transcripts of the manifests.
+            cuts_for_bins_estimate=CutSet.from_shar(
+                fields={"cuts": fields["cuts"]}, shuffle_shards=shuffle_shards, seed=seed
+            ),
         )
         return DataLoader(
             dataset, sampler=sampler, batch_size=None, num_workers=self.data_config.num_workers
