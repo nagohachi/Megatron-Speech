@@ -12,12 +12,7 @@ from lhotse.utils import compute_num_samples
 
 from megatron_speech.data.dataset import AudioTextDataset, AudioTextExampleBuilder
 from megatron_speech.data.packing import AudioTextExample, PackedAudioTextBatch
-from megatron_speech.data.provider import (
-    AudioTextDataConfig,
-    AudioTextDatasetsProvider,
-    iterate_epochs,
-    iterate_evaluations,
-)
+from megatron_speech.data.provider import AudioTextDataConfig, AudioTextDatasetsProvider
 from megatron_speech.data.sampling import TokenBucketingConfig
 
 SAMPLING_RATE = 16000
@@ -179,7 +174,7 @@ def test_epochs_take_every_utterance_in_another_order(
     """Check that the train iterator goes on to a second epoch, in another order."""
     loader = provider.build_loader([shar_dir], TOKEN_BUCKETING_CONFIG, 0, 1)
     lengths = []
-    for batch in iterate_epochs(loader):
+    for batch in provider.iterate_epochs(loader):
         lengths += [len(waveform) for waveform in batch.waveforms]
         if len(lengths) >= 2 * len(UTTERANCE_LENGTHS):
             break
@@ -192,9 +187,12 @@ def test_evaluations_take_same_batches(provider: AudioTextDatasetsProvider, shar
     """Check that each evaluation, also one longer than an epoch, takes the same micro-batches."""
     loader = provider.build_loader([shar_dir], replace(TOKEN_BUCKETING_CONFIG, shuffle=False), 0, 1)
     num_microbatches_per_evaluation = len(list(loader)) + 2
+    provider_of_long_evaluations = AudioTextDatasetsProvider(
+        provider.data_config, CharExampleBuilder(), PAD_TO_MULTIPLE, num_microbatches_per_evaluation
+    )
     batches = list(
         islice(
-            iterate_evaluations(loader, num_microbatches_per_evaluation),
+            provider_of_long_evaluations.iterate_evaluations(loader),
             2 * num_microbatches_per_evaluation,
         )
     )
@@ -206,10 +204,10 @@ def test_evaluations_take_same_batches(provider: AudioTextDatasetsProvider, shar
         assert torch.equal(batch.input_ids, batch_of_first_evaluation.input_ids)
 
 
-def test_evaluations_reject_empty_data() -> None:
+def test_evaluations_reject_empty_data(provider: AudioTextDatasetsProvider) -> None:
     """Check that validation data without micro-batches is rejected instead of read forever."""
     with pytest.raises(RuntimeError, match="no micro-batch"):
-        next(iterate_evaluations([], 3))
+        next(provider.iterate_evaluations([]))
 
 
 @pytest.mark.parametrize(

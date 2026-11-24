@@ -25,33 +25,6 @@ class AudioTextDataConfig:
     num_workers: int = 4
 
 
-def iterate_epochs(loader: DataLoader) -> Iterator[PackedAudioTextBatch]:
-    """Yield the micro-batches of ``loader`` epoch after epoch, each epoch in another order."""
-    for epoch in count():
-        loader.sampler.set_epoch(epoch)
-        yield from loader
-
-
-def iterate_evaluations(
-    loader: Iterable[PackedAudioTextBatch], num_microbatches_per_evaluation: int
-) -> Iterator[PackedAudioTextBatch]:
-    """Yield the same first micro-batches of ``loader`` at every evaluation.
-
-    An evaluation takes ``num_microbatches_per_evaluation`` micro-batches; when ``loader`` has
-    fewer, it is read again from the start within the evaluation.
-    """
-    while True:
-        num_microbatches_left = num_microbatches_per_evaluation
-        while num_microbatches_left:
-            num_microbatches_read = 0
-            for batch in islice(loader, num_microbatches_left):
-                num_microbatches_read += 1
-                yield batch
-            if not num_microbatches_read:
-                raise RuntimeError("the validation data have no micro-batch on this rank")
-            num_microbatches_left -= num_microbatches_read
-
-
 class AudioTextDatasetsProvider:
     """Datasets provider of ``megatron.training.pretrain`` for ``--dataloader-type external``.
 
@@ -131,6 +104,31 @@ class AudioTextDatasetsProvider:
             dataset, sampler=sampler, batch_size=None, num_workers=self.data_config.num_workers
         )
 
+    def iterate_epochs(self, loader: DataLoader) -> Iterator[PackedAudioTextBatch]:
+        """Yield the micro-batches of ``loader`` epoch after epoch, each epoch in another order."""
+        for epoch in count():
+            loader.sampler.set_epoch(epoch)
+            yield from loader
+
+    def iterate_evaluations(
+        self, loader: Iterable[PackedAudioTextBatch]
+    ) -> Iterator[PackedAudioTextBatch]:
+        """Yield the same first micro-batches of ``loader`` at every evaluation.
+
+        An evaluation takes ``num_microbatches_per_evaluation`` micro-batches; when ``loader``
+        has fewer, it is read again from the start within the evaluation.
+        """
+        while True:
+            num_microbatches_left = self.num_microbatches_per_evaluation
+            while num_microbatches_left:
+                num_microbatches_read = 0
+                for batch in islice(loader, num_microbatches_left):
+                    num_microbatches_read += 1
+                    yield batch
+                if not num_microbatches_read:
+                    raise RuntimeError("the validation data have no micro-batch on this rank")
+                num_microbatches_left -= num_microbatches_read
+
     def __call__(
         self, train_valid_test_num_samples: tuple[int, int | None, int]
     ) -> tuple[Iterator[PackedAudioTextBatch], Iterator[PackedAudioTextBatch] | None, None]:
@@ -148,7 +146,7 @@ class AudioTextDatasetsProvider:
         data_parallel_rank = parallel_state.get_data_parallel_rank()
         data_parallel_size = parallel_state.get_data_parallel_world_size()
         token_bucketing_config = self.data_config.token_bucketing
-        train_iterator = iterate_epochs(
+        train_iterator = self.iterate_epochs(
             self.build_loader(
                 self.data_config.train_shar_dirs,
                 token_bucketing_config,
@@ -166,6 +164,6 @@ class AudioTextDatasetsProvider:
         )
         return (
             train_iterator,
-            iterate_evaluations(valid_loader, self.num_microbatches_per_evaluation),
+            self.iterate_evaluations(valid_loader),
             None,
         )
