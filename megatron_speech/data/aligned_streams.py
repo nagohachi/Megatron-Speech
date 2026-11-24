@@ -261,23 +261,23 @@ class StreamDelayer:
                 num_stream_frames = num_frames
                 num_padding_frames = max_delay - stream_delay.num_delay_frames
             frame_shape = stream.values.shape[1:]
-            dtype = stream.values.dtype
+            # new_full and new_ones keep the dtype and the device, such as a GPU, of the stream.
             values = torch.cat(
                 [
-                    torch.full(
-                        (num_initial_frames, *frame_shape), stream_delay.initial_value, dtype=dtype
+                    stream.values.new_full(
+                        (num_initial_frames, *frame_shape), stream_delay.initial_value
                     ),
                     stream.values[:num_stream_frames],
-                    torch.full(
-                        (num_padding_frames, *frame_shape), stream_delay.padding_value, dtype=dtype
+                    stream.values.new_full(
+                        (num_padding_frames, *frame_shape), stream_delay.padding_value
                     ),
                 ]
             )
             present_frame_mask = torch.cat(
                 [
-                    torch.ones(num_initial_frames, dtype=torch.bool),
+                    stream.present_frame_mask.new_ones(num_initial_frames),
                     stream.present_frame_mask[:num_stream_frames],
-                    torch.ones(num_padding_frames, dtype=torch.bool),
+                    stream.present_frame_mask.new_ones(num_padding_frames),
                 ]
             )
             return FrameStream(values, present_frame_mask)
