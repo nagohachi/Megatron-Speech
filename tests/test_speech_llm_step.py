@@ -153,11 +153,6 @@ def build_microbatch_examples(data_parallel_size: int) -> list[list[AudioTextExa
     return microbatch_examples
 
 
-def collect_gradients(model: DistributedDataParallel) -> dict[str, torch.Tensor]:
-    """Copy ``main_grad``, where Megatron's DDP accumulates the gradients, by parameter name."""
-    return {name: param.main_grad.clone() for name, param in model.module.named_parameters()}
-
-
 @pytest.fixture(name="model_outputs")
 def run_training_step(
     model: DistributedDataParallel, microbatch_examples: list[list[AudioTextExample]]
@@ -172,7 +167,6 @@ def run_training_step(
         PackedAudioTextBatch.build(examples, 1, PAD_TOKEN_ID)
         for examples in microbatch_examples[rank * NUM_MICROBATCHES : (rank + 1) * NUM_MICROBATCHES]
     ]
-    model.zero_grad_buffer()
     reports = get_forward_backward_func()(
         forward_step_func=FORWARD_STEP,
         data_iterator=iter(batches),
@@ -183,27 +177,41 @@ def run_training_step(
     )
     report = torch.stack([report["lm loss"] for report in reports]).sum(dim=0)
     torch.distributed.all_reduce(report, group=parallel_state.get_data_parallel_group())
-    return TrainingStepOutputs(loss=report[0] / report[1], gradients=collect_gradients(model))
+    # Megatron's DDP accumulates the gradients in main_grad.
+    return TrainingStepOutputs(
+        loss=report[0] / report[1],
+        gradients={name: param.main_grad for name, param in model.module.named_parameters()},
+    )
 
 
 @pytest.fixture(name="reference_outputs")
 def run_one_row(
     model: DistributedDataParallel, microbatch_examples: list[list[AudioTextExample]]
 ) -> TrainingStepOutputs:
-    """Run the utterances of all micro-batches as one packed row on this rank alone.
+    """Run the utterances of all micro-batches as one packed row on this rank alone, in fp32.
 
-    The loss is the mean over the target tokens of the row, and the gradients are its own,
-    without the gradients of the other DP ranks.
+    The row runs through an fp32 copy of ``model``. The loss is the mean over the target tokens
+    of the row, and the gradients are its own, without the gradients of the other DP ranks.
     """
+    reference_model = build_speech_llm(
+        build_config(torch.float32),
+        ProcessGroupCollection.use_mpu_process_groups(),
+    ).cuda()
+    weights = dict(model.module.named_parameters())
+    with torch.no_grad():
+        for name, param in reference_model.named_parameters():
+            param.copy_(weights[name])
     batch = PackedAudioTextBatch.build(
         [example for examples in microbatch_examples for example in examples], 1, PAD_TOKEN_ID
     )
-    model.zero_grad_buffer()
-    loss, _ = FORWARD_STEP(iter([batch]), model)
+    loss, _ = FORWARD_STEP(iter([batch]), reference_model)
     loss_mask = batch.loss_mask.cuda()
-    mean_loss = (loss.float() * loss_mask).sum() / loss_mask.sum()
+    mean_loss = (loss * loss_mask).sum() / loss_mask.sum()
     mean_loss.backward()
-    return TrainingStepOutputs(loss=mean_loss.detach(), gradients=collect_gradients(model))
+    return TrainingStepOutputs(
+        loss=mean_loss.detach(),
+        gradients={name: param.grad for name, param in reference_model.named_parameters()},
+    )
 
 
 @pytest.mark.gpu
