@@ -36,11 +36,21 @@ class AlignedStreams:
     streams: dict[str, FrameStream]
 
     def __post_init__(self) -> None:
-        """Check that there is a stream and that every stream covers the same frames."""
+        """Check that there is a stream and that every stream covers the same frames.
+
+        Each stream needs values with a frame dimension and a bool mask with one entry for each
+        frame.
+        """
         if not self.streams:
             raise ValueError("AlignedStreams needs at least one stream")
         frame_counts = {}
         for name, stream in self.streams.items():
+            if stream.values.dim() == 0:
+                raise ValueError(f"stream {name} has values without a frame dimension")
+            if stream.present_frame_mask.dtype != torch.bool:
+                raise ValueError(
+                    f"stream {name} has a mask of {stream.present_frame_mask.dtype}, not bool"
+                )
             if stream.present_frame_mask.shape != stream.values.shape[:1]:
                 raise ValueError(
                     f"stream {name} has {stream.values.size(0)} frames of values but a mask of "

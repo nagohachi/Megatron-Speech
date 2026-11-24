@@ -80,6 +80,18 @@ def test_rejects_mask_of_another_length() -> None:
         AlignedStreams({"text": FrameStream(torch.zeros(10), torch.ones(9, dtype=torch.bool))})
 
 
+def test_rejects_mask_that_is_not_bool() -> None:
+    """Check that a mask of ints raises ValueError instead of acting as a mask later."""
+    with pytest.raises(ValueError, match=r"stream text has a mask of torch\.int64, not bool"):
+        AlignedStreams({"text": FrameStream(torch.zeros(10), torch.ones(10, dtype=torch.int64))})
+
+
+def test_rejects_values_without_frames() -> None:
+    """Check that 0-dim values raise ValueError that names the stream."""
+    with pytest.raises(ValueError, match="stream text has values without a frame dimension"):
+        AlignedStreams({"text": FrameStream(torch.tensor(1), torch.ones(1, dtype=torch.bool))})
+
+
 def test_rejects_no_streams() -> None:
     """Check that a recording without streams raises ValueError."""
     with pytest.raises(ValueError, match="at least one stream"):
