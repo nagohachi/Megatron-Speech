@@ -261,7 +261,6 @@ class StreamDelayer:
                 num_stream_frames = num_frames
                 num_padding_frames = max_delay - stream_delay.num_delay_frames
             frame_shape = stream.values.shape[1:]
-            # new_full and new_ones keep the dtype and the device, such as a GPU, of the stream.
             values = torch.cat(
                 [
                     stream.values.new_full(
