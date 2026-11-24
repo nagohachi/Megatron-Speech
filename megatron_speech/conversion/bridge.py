@@ -12,6 +12,8 @@ from megatron.core.transformer import MegatronModule
 
 # Files of a Hugging Face checkpoint besides the weights: config, tokenizer, processor.
 NON_WEIGHT_FILES = ["*.json", "*.txt", "*.jinja"]
+# Index of the weights of a checkpoint sharded over several safetensors files.
+SAFETENSORS_INDEX_FILE = "model.safetensors.index.json"
 
 
 class SafeTensorsCheckpoint:
@@ -88,7 +90,7 @@ class MappingBridge(MegatronModelBridge):
             Checkpoint whose files ``path`` gets. The weights that the mappings write take the
             models' values; the other weights, such as those of a codec that the models do not
             hold, are copied from ``checkpoint``, and so are the files besides the safetensors
-            files.
+            files and their index.
         path
             Directory to write.
         """
@@ -110,7 +112,13 @@ class MappingBridge(MegatronModelBridge):
         if is_writer:
             path.mkdir(parents=True, exist_ok=True)
             for source_file in checkpoint.model_name_or_path.iterdir():
-                if source_file.is_file() and source_file.suffix != ".safetensors":
+                # save_generator writes the safetensors files and, for a sharded checkpoint, an
+                # index of the files that it writes.
+                if (
+                    source_file.is_file()
+                    and source_file.suffix != ".safetensors"
+                    and source_file.name != SAFETENSORS_INDEX_FILE
+                ):
                     shutil.copy2(source_file, path / source_file.name)
         checkpoint.state.source.save_generator(stream_weights(), path)
         torch.distributed.barrier()
