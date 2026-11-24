@@ -38,10 +38,24 @@ class MultiStreamMimoModel(MimoModel):
     ) -> None:
         """Build the modules of ``mimo_config`` and the audio decoder of ``audio_decoder_spec``.
 
-        The LLM of ``mimo_config`` must be a ``MultiStreamLanguageModel``, and the ``params`` of
-        ``language_model_spec`` hold its ``config``, which ``MimoModel`` reads as well.
-        ``tp_group`` is the LLM's tensor parallel group, which ``MimoModel`` needs for sequence
-        parallelism.
+        Parameters
+        ----------
+        mimo_config
+            Specs of the LLM and of the encoders of the streams. The module of
+            ``language_model_spec`` must be ``MultiStreamLanguageModel`` or its subclass, and
+            the ``params`` of ``language_model_spec`` hold its ``config``, which ``MimoModel``
+            reads as well.
+        audio_decoder_spec
+            Spec of the audio decoder. ``forward`` passes the decoder the LLM's last layer
+            output at the positions that predict the audio, and the decoder returns the audio
+            loss.
+        text_loss_weight
+            Weight of the text loss in the total loss.
+        audio_loss_weight
+            Weight of the audio loss in the total loss.
+        tp_group
+            Tensor parallel group of the LLM, which ``MimoModel`` needs for sequence
+            parallelism. None takes the group of Megatron's ``parallel_state``.
         """
         language_model_spec = mimo_config.language_model_spec
         language_model_class = language_model_spec.module
