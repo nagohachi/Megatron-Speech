@@ -139,12 +139,18 @@ def build_microbatch_examples(data_parallel_size: int) -> list[list[AudioTextExa
     """Build the utterances of the micro-batches of all DP ranks, the same on every rank.
 
     The micro-batches hold 1 to 3 utterances, so that their numbers of target tokens differ.
+    The last micro-batch has no targets: its loss mask is 0 everywhere.
     """
     generator = torch.Generator().manual_seed(1)
-    return [
+    microbatch_examples = [
         [build_example(generator) for _ in range(int(torch.randint(1, 4, (), generator=generator)))]
         for _ in range(data_parallel_size * NUM_MICROBATCHES)
     ]
+    microbatch_examples[-1] = [
+        replace(example, loss_mask=torch.zeros_like(example.loss_mask))
+        for example in microbatch_examples[-1]
+    ]
+    return microbatch_examples
 
 
 def collect_gradients(model: DistributedDataParallel) -> dict[str, torch.Tensor]:
