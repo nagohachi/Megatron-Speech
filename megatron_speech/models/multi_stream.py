@@ -138,16 +138,41 @@ class MultiStreamMimoModel(MimoModel):
     ) -> MultiStreamLosses:
         """Calculate the text loss, the audio loss and their weighted sum.
 
-        ``input_ids``, ``position_ids``, ``labels`` and ``loss_mask`` are ``[batch, sequence]``.
-        ``modality_inputs``, ``modality_token_indices``, ``cu_seqlens``, ``cu_seqlens_padded``
-        and ``max_seqlen`` are those of ``MimoModel.forward``. ``loss_mask`` holds the weight of
-        each position's cross entropy, and the text loss is their weighted sum divided by the
-        sum of the weights, or 0 where the weights sum to 0.
+        Parameters
+        ----------
+        input_ids
+            Text token ids, ``[batch, sequence]``, read at the text positions of
+            ``modality_token_indices``.
+        position_ids
+            Position of each token in its sequence, ``[batch, sequence]``.
+        labels
+            Text token that each position predicts, ``[batch, sequence]``.
+        loss_mask
+            Weight of the cross entropy at each position, ``[batch, sequence]``; 0 where the
+            position predicts no text token.
+        modality_inputs
+            Inputs of the encoder of each stream, as ``MimoModel.forward`` takes them:
+            ``{stream name: {encoder name: {argument name: tensor}}}``.
+        modality_token_indices
+            Positions of each modality, ``"text"`` included, as flat indices
+            ``batch_index * sequence_length + position``.
+        audio_decoder_token_indices
+            Positions from which the audio decoder predicts the audio, as flat indices.
+        audio_decoder_inputs
+            Keyword arguments of the audio decoder besides the LLM's output, such as the audio
+            that the positions of ``audio_decoder_token_indices`` predict.
+        cu_seqlens, cu_seqlens_padded, max_seqlen
+            Cumulative lengths of the sequences packed into a row, without and with padding,
+            and the largest length, as ``MimoModel.forward`` takes them. None for one sequence
+            per row.
 
-        ``audio_decoder_token_indices`` holds the flat indices ``batch_index * seq_length +
-        position`` of the positions from which the audio decoder predicts the audio. The audio
-        decoder takes the LLM's last layer output at these positions, ``[num_indices, hidden]``,
-        with ``audio_decoder_inputs`` as keyword arguments, and returns the audio loss.
+        Returns
+        -------
+        MultiStreamLosses
+            ``text_loss`` is the cross entropy weighted by ``loss_mask`` and divided by the sum
+            of ``loss_mask``, or 0 where the sum is 0. ``audio_loss`` is the loss that the audio
+            decoder returns for the LLM's last layer output at ``audio_decoder_token_indices``,
+            ``[num_indices, hidden]``.
         """
         hidden_states, _ = super().forward(
             input_ids,
