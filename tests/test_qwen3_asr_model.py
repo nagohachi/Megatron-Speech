@@ -26,8 +26,8 @@ from megatron_speech.components.encoders.qwen3_asr import (
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMel, Qwen3ASRLogMelConfig
 from megatron_speech.conversion.bridge import MappingBridge
 from megatron_speech.conversion.qwen3_asr import build_qwen3_asr_mappings
-from megatron_speech.data.packing import PackedAudioTextBatch
-from megatron_speech.data.qwen3_asr import AudioTextExample, Qwen3ASRExampleBuilder
+from megatron_speech.data.packing import AudioTextExample, PackedAudioTextBatch
+from megatron_speech.data.qwen3_asr import Qwen3ASRExampleBuilder
 from megatron_speech.models.speech_llm import AUDIO_MODALITY, ENCODER_NAME, build_speech_llm
 from tests.hf_audio_inputs import HF_MODEL, TRANSCRIPT, WAVEFORM_LENGTHS
 from tests.numerical_error import calc_norm_relative_error, calc_relative_error

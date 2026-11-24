@@ -5,7 +5,21 @@ from typing import Self
 
 import torch
 
-from megatron_speech.data.qwen3_asr import AudioTextExample
+
+@dataclass
+class AudioTextExample:
+    """One utterance as the input of the speech LLM.
+
+    - ``waveform``: ``[num_samples]`` float32 audio at the log-mel's sampling rate.
+      The log-mel is computed from it on the GPU, for a whole micro-batch at once.
+    - ``input_ids``: ``[num_tokens]`` token ids, with one audio token per encoder frame.
+    - ``loss_mask``: ``[num_tokens]`` float32, 1 on the tokens that the model learns to predict
+      and 0 elsewhere.
+    """
+
+    waveform: torch.Tensor
+    input_ids: torch.Tensor
+    loss_mask: torch.Tensor
 
 
 @dataclass

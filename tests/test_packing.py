@@ -3,8 +3,7 @@ from itertools import pairwise
 import pytest
 import torch
 
-from megatron_speech.data.packing import PackedAudioTextBatch
-from megatron_speech.data.qwen3_asr import AudioTextExample
+from megatron_speech.data.packing import AudioTextExample, PackedAudioTextBatch
 
 PAD_TO_MULTIPLE = 4
 PAD_TOKEN_ID = 0

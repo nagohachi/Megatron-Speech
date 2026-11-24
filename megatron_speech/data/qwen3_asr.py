@@ -1,27 +1,10 @@
-from dataclasses import dataclass
-
 import numpy as np
 import torch
 from transformers import Qwen3ASRProcessor
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
-
-
-@dataclass
-class AudioTextExample:
-    """One utterance as the input of the speech LLM.
-
-    - ``waveform``: ``[num_samples]`` float32 audio at the log-mel's sampling rate.
-      The log-mel is computed from it on the GPU, for a whole micro-batch at once.
-    - ``input_ids``: ``[num_tokens]`` token ids, with one audio token per encoder frame.
-    - ``loss_mask``: ``[num_tokens]`` float32, 1 on the tokens that the model learns to predict
-      and 0 elsewhere; Megatron's loss is weighted by it.
-    """
-
-    waveform: torch.Tensor
-    input_ids: torch.Tensor
-    loss_mask: torch.Tensor
+from megatron_speech.data.packing import AudioTextExample
 
 
 class Qwen3ASRExampleBuilder:

@@ -5,7 +5,8 @@ from transformers import AutoProcessor
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
-from megatron_speech.data.qwen3_asr import AudioTextExample, Qwen3ASRExampleBuilder
+from megatron_speech.data.packing import AudioTextExample
+from megatron_speech.data.qwen3_asr import Qwen3ASRExampleBuilder
 from tests.hf_audio_inputs import HF_MODEL, TRANSCRIPT, WAVEFORM_LENGTHS
 
 # Each length of the audio, with or without the language forced in the prompt.
