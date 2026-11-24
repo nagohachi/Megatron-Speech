@@ -182,11 +182,11 @@ def run_training_step(
         seq_length=0,
         micro_batch_size=1,
     )
-    report = torch.stack([report["lm loss"] for report in reports]).sum(dim=0)
-    torch.distributed.all_reduce(report, group=parallel_state.get_data_parallel_group())
+    summed_report = torch.stack([report["lm loss"] for report in reports]).sum(dim=0)
+    torch.distributed.all_reduce(summed_report, group=parallel_state.get_data_parallel_group())
     # Megatron's DDP accumulates the gradients in main_grad.
     return TrainingStepOutputs(
-        loss=report[0] / report[1],
+        loss=summed_report[0] / summed_report[1],
         gradients={name: param.main_grad for name, param in model.module.named_parameters()},
     )
 
