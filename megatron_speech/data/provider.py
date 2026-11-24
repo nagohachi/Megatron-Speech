@@ -21,7 +21,7 @@ class AudioTextDataConfig:
     train_shar_dirs: list[Path]
     # Without directories, there is no validation.
     valid_shar_dirs: list[Path]
-    token_bucketing: TokenBucketingConfig
+    token_bucketing_config: TokenBucketingConfig
     # Number of worker processes on each rank, in which the train micro-batches are sampled,
     # loaded and packed.
     num_workers: int = 1
@@ -97,7 +97,7 @@ class AudioTextDatasetsProvider:
         the seed, the data parallel rank and the worker. The ranks of one data parallel group
         read in the same order.
         """
-        token_bucketing_config = self.data_config.token_bucketing
+        token_bucketing_config = self.data_config.token_bucketing_config
         fields = _list_shar_fields(self.data_config.train_shar_dirs)
         dataset = AudioTextDataset(self.example_builder, self.pad_to_multiple)
         sampler = build_token_bucketing_sampler(
@@ -130,7 +130,7 @@ class AudioTextDatasetsProvider:
         All shards are read on every data parallel rank, in their order, and the micro-batches
         are divided among the ranks.
         """
-        token_bucketing_config = replace(self.data_config.token_bucketing, shuffle=False)
+        token_bucketing_config = replace(self.data_config.token_bucketing_config, shuffle=False)
         fields = _list_shar_fields(self.data_config.valid_shar_dirs)
         dataset = AudioTextDataset(self.example_builder, self.pad_to_multiple)
         sampler = build_token_bucketing_sampler(

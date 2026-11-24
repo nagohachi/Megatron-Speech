@@ -120,7 +120,7 @@ def build_provider(shar_dir: Path) -> AudioTextDatasetsProvider:
     data_config = AudioTextDataConfig(
         train_shar_dirs=[shar_dir],
         valid_shar_dirs=[shar_dir],
-        token_bucketing=TOKEN_BUCKETING_CONFIG,
+        token_bucketing_config=TOKEN_BUCKETING_CONFIG,
         num_workers=2,
     )
     return AudioTextDatasetsProvider(
