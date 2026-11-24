@@ -77,7 +77,7 @@ def build_shar(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(name="cuts")
-def read_cuts(shar_dir: Path) -> CutSet:
+def build_cuts(shar_dir: Path) -> CutSet:
     """Read the first 5 utterances of the shards with their audio."""
     return CutSet.from_shar(in_dir=shar_dir).subset(first=5).to_eager()
 
