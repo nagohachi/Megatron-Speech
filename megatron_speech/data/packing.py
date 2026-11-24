@@ -5,11 +5,11 @@ from typing import Self
 
 import torch
 
-from megatron_speech.data.qwen3_asr import SpeechExample
+from megatron_speech.data.qwen3_asr import AudioTextExample
 
 
 @dataclass
-class PackedSpeechBatch:
+class PackedAudioTextBatch:
     """Micro-batch whose utterances are packed into one row, in Megatron's THD format.
 
     Each utterance is given one segment of the row: its tokens, then padding. Attention is
@@ -35,7 +35,9 @@ class PackedSpeechBatch:
     max_seqlen: torch.Tensor
 
     @classmethod
-    def build(cls, examples: list[SpeechExample], pad_to_multiple: int, pad_token_id: int) -> Self:
+    def build(
+        cls, examples: list[AudioTextExample], pad_to_multiple: int, pad_token_id: int
+    ) -> Self:
         """Pack ``examples`` into one row, with each padded to a multiple of ``pad_to_multiple``.
 
         With context parallelism, each segment is split into twice as many parts as there are

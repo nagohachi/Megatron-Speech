@@ -9,7 +9,7 @@ from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
 
 
 @dataclass
-class SpeechExample:
+class AudioTextExample:
     """One utterance as the input of the speech LLM.
 
     - ``waveform``: ``[num_samples]`` float32 audio at the log-mel's sampling rate.
@@ -25,7 +25,7 @@ class SpeechExample:
 
 
 class Qwen3ASRExampleBuilder:
-    """Build ``SpeechExample`` from audio and its transcript, as Qwen3-ASR's processor does.
+    """Build ``AudioTextExample`` from audio and its transcript, as Qwen3-ASR's processor does.
 
     - Prompt: Hugging Face's ``apply_transcription_request``, tokenized once; each example puts
       one audio token per encoder frame between its two halves.
@@ -88,7 +88,7 @@ class Qwen3ASRExampleBuilder:
         ).input_ids
         return [*self.answer_ids_before_transcript, *transcript_ids, self.end_of_turn_id]
 
-    def build(self, waveform: np.ndarray, transcript: str) -> SpeechExample:
+    def build(self, waveform: np.ndarray, transcript: str) -> AudioTextExample:
         """Build the example of ``waveform``, sampled at ``log_mel_config.sampling_rate``."""
         prompt_ids = [
             *self.prompt_ids_before_audio,
@@ -96,7 +96,7 @@ class Qwen3ASRExampleBuilder:
             *self.prompt_ids_after_audio,
         ]
         target_ids = self.build_target_ids(transcript)
-        return SpeechExample(
+        return AudioTextExample(
             waveform=torch.from_numpy(np.asarray(waveform, dtype=np.float32)),
             input_ids=torch.tensor(prompt_ids + target_ids),
             loss_mask=torch.cat(

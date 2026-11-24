@@ -5,7 +5,7 @@ from transformers import AutoProcessor
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
-from megatron_speech.data.qwen3_asr import Qwen3ASRExampleBuilder, SpeechExample
+from megatron_speech.data.qwen3_asr import AudioTextExample, Qwen3ASRExampleBuilder
 from tests.hf_audio_inputs import HF_MODEL, TRANSCRIPT, WAVEFORM_LENGTHS
 
 # Each length of the audio, with or without the language forced in the prompt.
@@ -39,13 +39,15 @@ def build_example_builder(force_language: bool) -> Qwen3ASRExampleBuilder:
 @pytest.fixture(name="example")
 def build_example(
     builder: Qwen3ASRExampleBuilder, waveform: np.ndarray, transcript: str
-) -> SpeechExample:
+) -> AudioTextExample:
     """Build the example of the waveform with the transcript."""
     return builder.build(waveform, transcript)
 
 
 @WITH_TRANSCRIPTS
-def test_input_ids_match_hf(example: SpeechExample, waveform: np.ndarray, transcript: str) -> None:
+def test_input_ids_match_hf(
+    example: AudioTextExample, waveform: np.ndarray, transcript: str
+) -> None:
     """Check that the token ids are Hugging Face's processor's for the whole conversation.
 
     Forcing the language moves where the loss starts, not the tokens.
@@ -58,7 +60,7 @@ def test_input_ids_match_hf(example: SpeechExample, waveform: np.ndarray, transc
 
 @WITH_TRANSCRIPTS
 def test_loss_mask_covers_answer(
-    example: SpeechExample, transcript: str, force_language: bool
+    example: AudioTextExample, transcript: str, force_language: bool
 ) -> None:
     """Check that the float32 loss mask covers the answer at the end, and only it."""
     expected = f"{transcript}<|im_end|>"
@@ -72,14 +74,14 @@ def test_loss_mask_covers_answer(
 
 
 @WITH_TRANSCRIPTS
-def test_waveform_is_kept(example: SpeechExample, waveform: np.ndarray) -> None:
+def test_waveform_is_kept(example: AudioTextExample, waveform: np.ndarray) -> None:
     """Check that the example keeps the float32 waveform, for the log-mel on the GPU."""
     assert example.waveform.dtype == torch.float32
     assert torch.equal(example.waveform, torch.from_numpy(waveform))
 
 
 @WITH_TRANSCRIPTS
-def test_audio_tokens_match_encoder_frames(example: SpeechExample, waveform: np.ndarray) -> None:
+def test_audio_tokens_match_encoder_frames(example: AudioTextExample, waveform: np.ndarray) -> None:
     """Check that there is one audio token per encoder frame of the released Qwen3-ASR.
 
     The mel frames are those that Hugging Face's feature extractor makes of the waveform.
@@ -98,7 +100,7 @@ def test_audio_tokens_match_encoder_frames(example: SpeechExample, waveform: np.
 
 @WITH_TRANSCRIPTS
 def test_token_count_matches_example(
-    builder: Qwen3ASRExampleBuilder, example: SpeechExample, num_samples: int, transcript: str
+    builder: Qwen3ASRExampleBuilder, example: AudioTextExample, num_samples: int, transcript: str
 ) -> None:
     """Check that the token count from the number of samples is the length of the example."""
     assert builder.calc_num_tokens(num_samples, transcript) == len(example.input_ids)

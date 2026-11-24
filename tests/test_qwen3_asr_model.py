@@ -26,8 +26,8 @@ from megatron_speech.components.encoders.qwen3_asr import (
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMel, Qwen3ASRLogMelConfig
 from megatron_speech.conversion.bridge import MappingBridge
 from megatron_speech.conversion.qwen3_asr import build_qwen3_asr_mappings
-from megatron_speech.data.packing import PackedSpeechBatch
-from megatron_speech.data.qwen3_asr import Qwen3ASRExampleBuilder, SpeechExample
+from megatron_speech.data.packing import PackedAudioTextBatch
+from megatron_speech.data.qwen3_asr import AudioTextExample, Qwen3ASRExampleBuilder
 from megatron_speech.models.speech_llm import AUDIO_MODALITY, ENCODER_NAME, build_speech_llm
 from tests.hf_audio_inputs import HF_MODEL, TRANSCRIPT, WAVEFORM_LENGTHS
 from tests.numerical_error import calc_norm_relative_error, calc_relative_error
@@ -79,7 +79,7 @@ def build_waveforms() -> dict[str, np.ndarray]:
 
 
 @pytest.fixture(name="examples", scope="module")
-def build_examples(waveforms: dict[str, np.ndarray]) -> dict[str, SpeechExample]:
+def build_examples(waveforms: dict[str, np.ndarray]) -> dict[str, AudioTextExample]:
     """Build the training example of each waveform with ``TRANSCRIPT`` in English."""
     builder = Qwen3ASRExampleBuilder(
         PROCESSOR, Qwen3ASRLogMelConfig(), Qwen3ASREncoderConfig(), "English", False
@@ -115,7 +115,7 @@ def build_hf_pretrained() -> PreTrainedCausalLM:
 def run_reference(
     hf_pretrained: PreTrainedCausalLM,
     waveforms: dict[str, np.ndarray],
-    examples: dict[str, SpeechExample],
+    examples: dict[str, AudioTextExample],
 ) -> ReferenceOutputs:
     """Run Hugging Face's Qwen3-ASR in fp32, then in bf16, which holds the released weights."""
     model = hf_pretrained.model
@@ -173,7 +173,7 @@ def build_model(
 def calc_model_outputs(
     model: DistributedDataParallel,
     hf_pretrained: PreTrainedCausalLM,
-    examples: dict[str, SpeechExample],
+    examples: dict[str, AudioTextExample],
 ) -> ModelOutputs:
     """Run the model under test as training does: one packed row, log-mel on the GPU."""
 
@@ -197,7 +197,7 @@ def calc_model_outputs(
             for param, weight in zip(params, weights, strict=True):
                 param.data = weight
 
-    batch = PackedSpeechBatch.build(
+    batch = PackedAudioTextBatch.build(
         list(examples.values()), PAD_TO_MULTIPLE, PROCESSOR.tokenizer.pad_token_id
     )
 
