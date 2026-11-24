@@ -163,3 +163,127 @@ class WindowSplitter:
             range(start, start + length) for start, length in zip(starts, lengths, strict=True)
         ]
         return [window for window in windows if len(window) >= self.min_frames]
+
+
+@dataclass
+class StreamDelay:
+    """How one stream of a recording is delayed, as ``StreamDelayer`` takes it.
+
+    - ``num_delay_frames``: number of frames by which the stream starts later than the
+      recording.
+    - ``initial_value``: value of the frames before the delayed stream starts, such as Moshi's
+      initial token.
+    - ``padding_value``: value of the frames after the stream ends, when ``StreamDelayer``
+      makes the recording longer (J-Moshi's padding token).
+    """
+
+    num_delay_frames: int
+    initial_value: int | float
+    padding_value: int | float
+
+
+@dataclass
+class StreamDelayer:
+    """Delayer of some streams of a recording against the others, as Moshi reads its audio.
+
+    Moshi reads the text and the first codebook of the audio of a frame together, and the
+    other codebooks one frame later. Each codebook is then a stream of its own, delayed by 0
+    or by 1 frame. ``delays`` gives the ``StreamDelay`` of every stream of the recording.
+
+    ``keep_length``, a name of this code, chooses the length of the delayed recording.
+
+    - True: the recording keeps its length, and each delayed stream loses its last frames.
+      Kyutai's moshi-finetune delays each window of a recording this way.
+    - False: the recording grows by the largest delay, and each stream that is delayed less
+      gets ``padding_value`` at its end, so that no frame is lost. J-Moshi delays a whole
+      recording this way before it cuts the recording into windows.
+
+    The frames that get ``initial_value`` or ``padding_value`` are present in the mask, since
+    the model reads these values. For example, a text stream ``t`` (delay 0, padding value
+    ``P``) and a codebook ``c`` (delay 1, initial value ``I``) of 3 frames give::
+
+        frame                         0    1    2    3
+        before the delay   text       t0   t1   t2
+                           codebook   c0   c1   c2
+        keep_length=True   text       t0   t1   t2
+                           codebook   I    c0   c1
+        keep_length=False  text       t0   t1   t2   P
+                           codebook   I    c0   c1   c2
+    """
+
+    delays: dict[str, StreamDelay]
+    keep_length: bool
+
+    def __post_init__(self) -> None:
+        """Check that no stream is delayed by a negative number of frames."""
+        for name, stream_delay in self.delays.items():
+            if stream_delay.num_delay_frames < 0:
+                raise ValueError(
+                    f"stream {name} has a negative num_delay_frames of "
+                    f"{stream_delay.num_delay_frames}"
+                )
+
+    def delay_streams(self, streams: AlignedStreams) -> AlignedStreams:
+        """Return the streams of a recording, each delayed by its ``StreamDelay``.
+
+        Parameters
+        ----------
+        streams
+            Streams of the recording, which must be the streams that ``delays`` names.
+
+        Returns
+        -------
+        AlignedStreams
+            The delayed streams, with as many frames as ``streams`` if ``keep_length`` is
+            True, and with as many more as the largest delay if not.
+
+        Raises
+        ------
+        ValueError
+            If the streams differ from the streams that ``delays`` names.
+        """
+        if streams.streams.keys() != self.delays.keys():
+            raise ValueError(
+                f"the recording has the streams {sorted(streams.streams)}, but delays has "
+                f"{sorted(self.delays)}"
+            )
+        max_delay = max(stream_delay.num_delay_frames for stream_delay in self.delays.values())
+        num_frames = streams.num_frames
+
+        def delay_stream(stream: FrameStream, stream_delay: StreamDelay) -> FrameStream:
+            """Put ``initial_value`` before the stream, and ``padding_value`` after it."""
+            if self.keep_length:
+                num_initial_frames = min(stream_delay.num_delay_frames, num_frames)
+                num_stream_frames = num_frames - num_initial_frames
+                num_padding_frames = 0
+            else:
+                num_initial_frames = stream_delay.num_delay_frames
+                num_stream_frames = num_frames
+                num_padding_frames = max_delay - stream_delay.num_delay_frames
+            frame_shape = stream.values.shape[1:]
+            values = torch.cat(
+                [
+                    stream.values.new_full(
+                        (num_initial_frames, *frame_shape), stream_delay.initial_value
+                    ),
+                    stream.values[:num_stream_frames],
+                    stream.values.new_full(
+                        (num_padding_frames, *frame_shape), stream_delay.padding_value
+                    ),
+                ]
+            )
+            present_frame_mask = torch.cat(
+                [
+                    stream.present_frame_mask.new_ones(num_initial_frames),
+                    stream.present_frame_mask[:num_stream_frames],
+                    stream.present_frame_mask.new_ones(num_padding_frames),
+                ]
+            )
+            return FrameStream(values, present_frame_mask)
+
+        return AlignedStreams(
+            {
+                name: delay_stream(stream, self.delays[name])
+                for name, stream in streams.streams.items()
+            }
+        )
