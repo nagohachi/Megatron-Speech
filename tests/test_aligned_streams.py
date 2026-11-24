@@ -55,6 +55,14 @@ def test_rejects_frames_with_a_step(streams: AlignedStreams) -> None:
         streams.take_frames(range(0, NUM_FRAMES, 2))
 
 
+# Frames past the end of the recording, and frames from before its start.
+@pytest.mark.parametrize("frames", [range(5, 20), range(-3, 5)], ids=["past-end", "before-start"])
+def test_rejects_frames_outside_recording(streams: AlignedStreams, frames: range) -> None:
+    """Check that frames outside the recording raise ValueError instead of a shorter window."""
+    with pytest.raises(ValueError, match=f"frames from 0 to {NUM_FRAMES}"):
+        streams.take_frames(frames)
+
+
 def test_rejects_streams_of_different_lengths() -> None:
     """Check that streams with different numbers of frames raise ValueError."""
     with pytest.raises(ValueError, match="different numbers of frames"):
