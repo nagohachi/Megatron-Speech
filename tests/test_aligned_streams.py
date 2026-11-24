@@ -332,25 +332,28 @@ def test_matches_delay_example_of_docstring(
     assert delayed_streams.streams["codebook"].values.tolist() == expected_codebook
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
 @pytest.mark.parametrize("keep_length", [False, True])
 def test_keeps_device_of_streams(undelayed_streams: AlignedStreams, keep_length: bool) -> None:
-    """Check that the delayed streams stay on the GPU when the streams are on it."""
-    streams_on_gpu = AlignedStreams(
+    """Check that the delayed streams stay on the device of the streams, such as a GPU.
+
+    The streams are on the meta device, so that the test runs without a GPU: concatenating
+    them with tensors made on the CPU raises an error.
+    """
+    streams_on_meta = AlignedStreams(
         {
             name: FrameStream(
-                stream.values.cuda(),
-                stream.present_frame_mask.cuda(),
-                stream.target_frame_mask.cuda(),
+                stream.values.to("meta"),
+                stream.present_frame_mask.to("meta"),
+                stream.target_frame_mask.to("meta"),
             )
             for name, stream in undelayed_streams.streams.items()
         }
     )
-    delayed_streams = StreamDelayer(STREAM_DELAYS, keep_length).delay_streams(streams_on_gpu)
+    delayed_streams = StreamDelayer(STREAM_DELAYS, keep_length).delay_streams(streams_on_meta)
     for name, stream in delayed_streams.streams.items():
-        assert stream.values.is_cuda, name
-        assert stream.present_frame_mask.is_cuda, name
-        assert stream.target_frame_mask.is_cuda, name
+        assert stream.values.is_meta, name
+        assert stream.present_frame_mask.is_meta, name
+        assert stream.target_frame_mask.is_meta, name
 
 
 def test_fills_window_shorter_than_delay(undelayed_streams: AlignedStreams) -> None:
