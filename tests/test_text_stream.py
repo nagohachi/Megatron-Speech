@@ -32,6 +32,11 @@ OVERLAPPING_TOKENS = [
     TimedTokens(token_ids=[15], start_time=calc_start_time(5)),
     TimedTokens(token_ids=[16], start_time=calc_start_time(5)),
 ]
+# Tokens of a word, then a word with no tokens, such as one that the tokenizer drops.
+TOKENS_BEFORE_EMPTY_WORD = [
+    TimedTokens(token_ids=[10, 11, 12], start_time=calc_start_time(1)),
+    TimedTokens(token_ids=[], start_time=calc_start_time(2)),
+]
 
 
 @pytest.fixture(name="builder")
@@ -74,12 +79,39 @@ def test_delays_leftover_tokens(builder: TextStreamBuilder) -> None:
     assert stream.tolist() == [EPAD, 10, 11, 12, 13, 14, 15, 16, PAD]
 
 
+@pytest.mark.parametrize("leftover_tokens", ["delay"])
+def test_drops_tokens_delayed_past_last_frame(builder: TextStreamBuilder) -> None:
+    """Check that the tokens that the delay pushes past the last frame are dropped."""
+    stream = builder.build(OVERLAPPING_TOKENS, num_frames=7)
+    assert stream.tolist() == [EPAD, 10, 11, 12, 13, 14, 15]
+
+
 @WITH_LEFTOVER_RULES
 def test_drops_tokens_after_last_frame(builder: TextStreamBuilder) -> None:
-    """Check that the tokens past the end of the frames are dropped."""
-    timed_tokens = [TimedTokens(token_ids=[10, 11, 12], start_time=calc_start_time(3))]
+    """Check that the tokens past the end of the frames are dropped.
+
+    The second word starts after the last frame, so none of its tokens is placed.
+    """
+    timed_tokens = [
+        TimedTokens(token_ids=[10, 11, 12], start_time=calc_start_time(3)),
+        TimedTokens(token_ids=[13], start_time=calc_start_time(6)),
+    ]
     stream = builder.build(timed_tokens, num_frames=5)
     assert stream.tolist() == [PAD, PAD, EPAD, 10, 11]
+
+
+@pytest.mark.parametrize("leftover_tokens", ["drop"])
+def test_word_without_tokens_drops_leftover_tokens(builder: TextStreamBuilder) -> None:
+    """Check that a word without tokens still drops the leftover tokens of the word before."""
+    stream = builder.build(TOKENS_BEFORE_EMPTY_WORD, num_frames=5)
+    assert stream.tolist() == [EPAD, 10, PAD, PAD, PAD]
+
+
+@pytest.mark.parametrize("leftover_tokens", ["delay"])
+def test_word_without_tokens_keeps_delayed_tokens(builder: TextStreamBuilder) -> None:
+    """Check that a word without tokens leaves the tokens of the word before in place."""
+    stream = builder.build(TOKENS_BEFORE_EMPTY_WORD, num_frames=5)
+    assert stream.tolist() == [EPAD, 10, 11, 12, PAD]
 
 
 @WITH_LEFTOVER_RULES
@@ -102,7 +134,7 @@ def test_builds_no_frames_for_zero_frames(builder: TextStreamBuilder) -> None:
 def test_orders_tokens_by_start_time(builder: TextStreamBuilder) -> None:
     """Check that the tokens are placed in the order of their start times, not of the list."""
     stream = builder.build(SEPARATE_TOKENS[::-1], num_frames=9)
-    assert stream.tolist() == builder.build(SEPARATE_TOKENS, num_frames=9).tolist()
+    assert stream.tolist() == [10, 11, PAD, EPAD, 12, 13, 14, PAD, PAD]
 
 
 @WITH_LEFTOVER_RULES
