@@ -429,20 +429,25 @@ def test_accepts_batch_without_streams(
     assert error < TOLERANCES[dtype]
 
 
-def test_text_loss_is_zero_without_text_targets(model: MultiStreamMimoModel, batch: Batch) -> None:
+@pytest.fixture(name="batch_without_text_targets")
+def build_batch_without_text_targets(batch: Batch) -> Batch:
+    """Build ``batch`` with text loss weights of all 0."""
+    return replace(batch, loss_mask=torch.zeros_like(batch.loss_mask))
+
+
+def test_text_loss_is_zero_without_text_targets(
+    model: MultiStreamMimoModel, batch_without_text_targets: Batch
+) -> None:
     """Check that a batch whose text loss weights are all 0 gives a text loss of 0."""
     with torch.no_grad():
-        losses = calc_mimo_losses(
-            model, replace(batch, loss_mask=torch.zeros_like(batch.loss_mask))
-        )
+        losses = calc_mimo_losses(model, batch_without_text_targets)
     assert losses.text_loss.item() == 0
 
 
 def test_gradients_are_finite_without_text_targets(
-    model: MultiStreamMimoModel, batch: Batch
+    model: MultiStreamMimoModel, batch_without_text_targets: Batch
 ) -> None:
     """Check that text loss weights of all 0 give every parameter a finite gradient."""
-    batch_without_text_targets = replace(batch, loss_mask=torch.zeros_like(batch.loss_mask))
     calc_mimo_losses(model, batch_without_text_targets).total_loss.backward()
     for name, param in model.named_parameters():
         assert param.grad is not None, name
