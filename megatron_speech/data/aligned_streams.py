@@ -18,10 +18,10 @@ class FrameStream:
     - ``present_frame_mask``: ``[num_frames]`` bool, False at the frames where the stream has
       no value, such as the frames of a prompt that hold only text. The model gets no input
       from the stream at these frames.
-    - ``target_frame_mask``: ``[num_frames]`` bool, True at the frames whose value the model
-      learns to predict, if it predicts the stream. It is False at the frames that are only an
-      input, such as the frames of a prompt and the frames that ``StreamDelayer`` fills, and at
-      the frames where the stream has no value.
+    - ``target_frame_mask``: ``[num_frames]`` bool, False at the frames that are only an input,
+      such as the frames of a prompt and the frames that ``StreamDelayer`` fills. If the model
+      predicts the stream, it learns to predict the value at the frames where both masks are
+      True.
     """
 
     values: torch.Tensor
@@ -43,8 +43,8 @@ class AlignedStreams:
     def __post_init__(self) -> None:
         """Check that there is a stream and that every stream covers the same frames.
 
-        Each stream needs values with a frame dimension, two bool masks with one entry for each
-        frame, and a value at each of its target frames.
+        Each stream needs values with a frame dimension and two bool masks with one entry for
+        each frame.
         """
         if not self.streams:
             raise ValueError("AlignedStreams needs at least one stream")
@@ -64,8 +64,6 @@ class AlignedStreams:
                         f"stream {name} has {stream.values.size(0)} frames of values but a "
                         f"{mask_name} of shape {tuple(mask.shape)}"
                     )
-            if (stream.target_frame_mask & ~stream.present_frame_mask).any():
-                raise ValueError(f"stream {name} has target frames where it has no value")
             frame_counts[name] = stream.values.size(0)
         if len(set(frame_counts.values())) > 1:
             raise ValueError(f"the streams have different numbers of frames: {frame_counts}")

@@ -122,13 +122,6 @@ def test_rejects_mask_that_is_not_bool(mask_name: str) -> None:
         AlignedStreams({"text": stream})
 
 
-def test_rejects_target_frames_without_value() -> None:
-    """Check that a target at a frame where the stream has no value raises ValueError."""
-    stream = replace(build_full_stream(torch.zeros(10)), present_frame_mask=torch.arange(10) >= 2)
-    with pytest.raises(ValueError, match="stream text has target frames where it has no value"):
-        AlignedStreams({"text": stream})
-
-
 def test_rejects_values_without_frames() -> None:
     """Check that 0-dim values raise ValueError that names the stream."""
     one_frame = torch.ones(1, dtype=torch.bool)
