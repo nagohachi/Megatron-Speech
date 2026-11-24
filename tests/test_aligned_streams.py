@@ -364,6 +364,31 @@ def test_fills_window_shorter_than_delay(undelayed_streams: AlignedStreams) -> N
     assert delayed_window.streams["late_acoustic"].values.tolist() == [2048]
 
 
+def test_prepends_initial_frame(undelayed_streams: AlignedStreams) -> None:
+    """Check that each stream gets a frame of its initial value in front, present and no target."""
+    streams = StreamDelayer(STREAM_DELAYS, keep_length=True).prepend_initial_frame(
+        undelayed_streams
+    )
+    assert streams.num_frames == NUM_RECORDING_FRAMES + 1
+    for name, stream in streams.streams.items():
+        undelayed_stream = undelayed_streams.streams[name]
+        assert (stream.values[0] == STREAM_DELAYS[name].initial_value).all(), name
+        assert torch.equal(stream.values[1:], undelayed_stream.values), name
+        present_frame_mask = [True, *undelayed_stream.present_frame_mask.tolist()]
+        assert stream.present_frame_mask.tolist() == present_frame_mask, name
+        target_frame_mask = [False, *undelayed_stream.target_frame_mask.tolist()]
+        assert stream.target_frame_mask.tolist() == target_frame_mask, name
+
+
+def test_rejects_initial_frame_for_streams_other_than_delays(
+    undelayed_streams: AlignedStreams,
+) -> None:
+    """Check that the initial frame for streams that ``delays`` does not name raises ValueError."""
+    delays = {name: STREAM_DELAYS[name] for name in ["text", "semantic"]}
+    with pytest.raises(ValueError, match="but delays has"):
+        StreamDelayer(delays, keep_length=True).prepend_initial_frame(undelayed_streams)
+
+
 @pytest.mark.parametrize("keep_length", [False, True])
 def test_rejects_streams_other_than_delays(
     undelayed_streams: AlignedStreams, keep_length: bool
