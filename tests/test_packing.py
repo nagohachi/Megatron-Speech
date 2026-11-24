@@ -86,6 +86,12 @@ def test_build_without_padding_joins_utterances() -> None:
     assert torch.equal(batch.input_ids[0], torch.cat([example.input_ids for example in EXAMPLES]))
 
 
+def test_build_rejects_no_examples() -> None:
+    """Check that an empty list of examples is rejected with the name ``examples``."""
+    with pytest.raises(ValueError, match="examples"):
+        PackedAudioTextBatch.build([], PAD_TO_MULTIPLE, PAD_TOKEN_ID)
+
+
 def test_build_rejects_pad_to_multiple_below_one() -> None:
     """Check that a ``pad_to_multiple`` below 1 is rejected with its name."""
     with pytest.raises(ValueError, match="pad_to_multiple"):

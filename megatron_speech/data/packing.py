@@ -45,6 +45,8 @@ class PackedAudioTextBatch:
         parallel ranks. ``pad_to_multiple`` is the product of these numbers of parts for the
         parallelisms in use, and 1 for neither. Padding is given ``pad_token_id``.
         """
+        if not examples:
+            raise ValueError("examples is empty; a micro-batch needs at least one utterance")
         if pad_to_multiple < 1:
             raise ValueError(f"pad_to_multiple must be at least 1, got {pad_to_multiple}")
         input_ids, labels, loss_mask, segment_lengths = [], [], [], []
