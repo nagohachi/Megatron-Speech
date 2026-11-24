@@ -123,28 +123,6 @@ def build_model(dtype: torch.dtype, data_parallel_size: int) -> DistributedDataP
     )
 
 
-def build_example(generator: torch.Generator) -> AudioTextExample:
-    """Build an utterance of random audio whose numbers of samples and targets are random."""
-    num_samples = int(torch.randint(4000, 24000, (), generator=generator))
-    num_audio_tokens = ENCODER_CONFIG.calc_num_encoder_frames(
-        LOG_MEL_CONFIG.calc_num_frames(num_samples)
-    )
-    num_target_tokens = int(torch.randint(1, 16, (), generator=generator))
-    return AudioTextExample(
-        waveform=0.1 * torch.randn(num_samples, generator=generator),
-        input_ids=torch.cat(
-            [
-                torch.randint(AUDIO_TOKEN_ID, (NUM_PROMPT_TOKENS,), generator=generator),
-                torch.full((num_audio_tokens,), AUDIO_TOKEN_ID),
-                torch.randint(AUDIO_TOKEN_ID, (num_target_tokens,), generator=generator),
-            ]
-        ),
-        loss_mask=torch.cat(
-            [torch.zeros(NUM_PROMPT_TOKENS + num_audio_tokens), torch.ones(num_target_tokens)]
-        ),
-    )
-
-
 @pytest.fixture(name="microbatch_examples")
 def build_microbatch_examples(data_parallel_size: int) -> list[list[AudioTextExample]]:
     """Build the utterances of the micro-batches of all DP ranks, the same on every rank.
@@ -152,9 +130,31 @@ def build_microbatch_examples(data_parallel_size: int) -> list[list[AudioTextExa
     The micro-batches hold 1 to 3 utterances, so that their numbers of target tokens differ.
     The last micro-batch has no targets: its loss mask is 0 everywhere.
     """
+
+    def build_example() -> AudioTextExample:
+        """Build an utterance of random audio whose numbers of samples and targets are random."""
+        num_samples = int(torch.randint(4000, 24000, (), generator=generator))
+        num_audio_tokens = ENCODER_CONFIG.calc_num_encoder_frames(
+            LOG_MEL_CONFIG.calc_num_frames(num_samples)
+        )
+        num_target_tokens = int(torch.randint(1, 16, (), generator=generator))
+        return AudioTextExample(
+            waveform=0.1 * torch.randn(num_samples, generator=generator),
+            input_ids=torch.cat(
+                [
+                    torch.randint(AUDIO_TOKEN_ID, (NUM_PROMPT_TOKENS,), generator=generator),
+                    torch.full((num_audio_tokens,), AUDIO_TOKEN_ID),
+                    torch.randint(AUDIO_TOKEN_ID, (num_target_tokens,), generator=generator),
+                ]
+            ),
+            loss_mask=torch.cat(
+                [torch.zeros(NUM_PROMPT_TOKENS + num_audio_tokens), torch.ones(num_target_tokens)]
+            ),
+        )
+
     generator = torch.Generator().manual_seed(1)
     microbatch_examples = [
-        [build_example(generator) for _ in range(int(torch.randint(1, 4, (), generator=generator)))]
+        [build_example() for _ in range(int(torch.randint(1, 4, (), generator=generator)))]
         for _ in range(data_parallel_size * NUM_MICROBATCHES)
     ]
     microbatch_examples[-1] = [
