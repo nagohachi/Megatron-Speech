@@ -134,18 +134,21 @@ def test_word_without_tokens_keeps_leftover_tokens(builder: TextStreamBuilder) -
 
 @WITH_KEEP_AND_SHIFT
 def test_pads_frames_without_tokens(builder: TextStreamBuilder) -> None:
-    """Check that audio without text gets PAD on every frame, as int64 token ids."""
-    stream = builder.build([], num_frames=4)
-    assert stream.tolist() == [PAD] * 4
-    assert stream.dtype == torch.int64
+    """Check that audio without text gets PAD on every frame."""
+    assert builder.build([], num_frames=4).tolist() == [PAD] * 4
 
 
 @WITH_KEEP_AND_SHIFT
 def test_builds_no_frames_for_zero_frames(builder: TextStreamBuilder) -> None:
-    """Check that ``num_frames=0`` gives an empty stream of int64 token ids."""
-    stream = builder.build(SEPARATE_TOKENS, num_frames=0)
-    assert stream.tolist() == []
-    assert stream.dtype == torch.int64
+    """Check that ``num_frames=0`` gives an empty stream."""
+    assert builder.build(SEPARATE_TOKENS, num_frames=0).tolist() == []
+
+
+@WITH_KEEP_AND_SHIFT
+@pytest.mark.parametrize("num_frames", [0, 4])
+def test_returns_int64_token_ids(builder: TextStreamBuilder, num_frames: int) -> None:
+    """Check that the stream is int64, as token ids are, also when it is empty."""
+    assert builder.build(SEPARATE_TOKENS, num_frames=num_frames).dtype == torch.int64
 
 
 @WITH_KEEP_AND_SHIFT
