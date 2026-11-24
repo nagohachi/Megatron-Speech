@@ -87,12 +87,26 @@ class MultiStreamMimoModel(MimoModel):
         special_token_ids: dict[str, int],
         modality_token_indices: dict[str, torch.Tensor] | None = None,
     ) -> torch.Tensor:
-        """Add the embeddings of each modality at its positions; return ``[seq, batch, hidden]``.
+        """Add the embeddings of each modality at its positions.
 
-        ``modality_token_indices`` maps every modality of ``modality_embeddings``, ``"text"``
-        included, to the flat indices ``batch_index * seq_length + position`` of its rows. The
-        positions of different modalities may be the same; a position that no modality holds
-        gets zeros. ``special_token_ids`` is not used.
+        Parameters
+        ----------
+        modality_embeddings
+            Embeddings ``[num_positions, hidden]`` of each modality, ``"text"`` included.
+        input_ids
+            Text token ids ``[batch, sequence]``, of which only the shape is used.
+        special_token_ids
+            Not used; ``modality_token_indices`` gives the positions.
+        modality_token_indices
+            Flat indices ``batch_index * sequence_length + position`` of the rows of each
+            modality of ``modality_embeddings``. The positions of different modalities may be
+            the same. None raises ValueError.
+
+        Returns
+        -------
+        torch.Tensor
+            LLM input ``[sequence, batch, hidden]``: at each position, the sum of the embeddings
+            placed there, or zeros where no modality is placed.
         """
         if modality_token_indices is None:
             raise ValueError(
