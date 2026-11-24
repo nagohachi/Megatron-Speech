@@ -65,6 +65,8 @@ class TokenBucketingConfig:
     num_buckets: int = 10
     # The bucket bounds are estimated from this many cuts at the start of the cuts.
     num_cuts_for_bins_estimate: int = 10000
+    # Cuts held in memory at once over all buckets, from which the micro-batches are made.
+    buffer_size: int = 20000
     shuffle: bool = True
     seed: int = 0
 
@@ -82,6 +84,8 @@ class TokenBucketingConfig:
                 f"num_cuts_for_bins_estimate ({self.num_cuts_for_bins_estimate}) must be at "
                 f"least num_buckets ({self.num_buckets})"
             )
+        if self.buffer_size < 1:
+            raise ValueError(f"buffer_size must be at least 1, got {self.buffer_size}")
 
 
 def build_token_bucketing_sampler(
@@ -114,6 +118,7 @@ def build_token_bucketing_sampler(
             constraint, bucket_max_tokens=[*bucket_bounds, config.max_tokens_per_example]
         ),
         duration_bins=bucket_bounds,
+        buffer_size=config.buffer_size,
         shuffle=config.shuffle,
         seed=config.seed,
         rank=rank,
