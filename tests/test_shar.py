@@ -75,10 +75,10 @@ def test_shards_hold_every_utterance_once(shar_dir: Path) -> None:
     assert sorted(read_utterance_ids(shar_dir)) == sorted(TRANSCRIPTS)
 
 
-def test_shards_hold_transcripts(shar_dir: Path) -> None:
-    """Check that each utterance in the shards has its transcript."""
+def test_shards_hold_normalized_transcripts(shar_dir: Path) -> None:
+    """Check that each utterance in the shards has its transcript, in lowercase for LibriSpeech."""
     for cut in CutSet.from_shar(in_dir=shar_dir):
-        assert cut.supervisions[0].text == TRANSCRIPTS[cut.recording_id]
+        assert cut.supervisions[0].text == TRANSCRIPTS[cut.recording_id].lower()
 
 
 def test_shards_hold_original_audio(shar_dir: Path, corpus_dir: Path) -> None:

@@ -17,3 +17,7 @@ class LibriSpeechRecipe(CorpusRecipe):
         """
         manifests = prepare_librispeech(corpus_dir, dataset_parts=parts, num_jobs=num_jobs)
         return {part: CutSet.from_manifests(**manifests[part]) for part in parts}
+
+    def normalize_transcript(self, transcript: str) -> str:
+        """Return ``transcript`` in lowercase; the transcripts of LibriSpeech are in capitals."""
+        return transcript.lower()
