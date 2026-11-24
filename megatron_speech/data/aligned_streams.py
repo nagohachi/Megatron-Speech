@@ -18,10 +18,15 @@ class FrameStream:
     - ``present_frame_mask``: ``[num_frames]`` bool, False at the frames where the stream has
       no value, such as the frames of a prompt that hold only text. The model gets no input
       from the stream at these frames.
+    - ``target_frame_mask``: ``[num_frames]`` bool, False at the frames that are only an input,
+      such as the frames of a prompt and the frames that ``StreamDelayer`` fills. If the model
+      predicts the stream, it learns to predict the value at the frames where both masks are
+      True.
     """
 
     values: torch.Tensor
     present_frame_mask: torch.Tensor
+    target_frame_mask: torch.Tensor
 
 
 @dataclass
@@ -38,8 +43,8 @@ class AlignedStreams:
     def __post_init__(self) -> None:
         """Check that there is a stream and that every stream covers the same frames.
 
-        Each stream needs values with a frame dimension and a bool mask with one entry for each
-        frame.
+        Each stream needs values with a frame dimension and two bool masks with one entry for
+        each frame.
         """
         if not self.streams:
             raise ValueError("AlignedStreams needs at least one stream")
@@ -47,15 +52,18 @@ class AlignedStreams:
         for name, stream in self.streams.items():
             if stream.values.dim() == 0:
                 raise ValueError(f"stream {name} has values without a frame dimension")
-            if stream.present_frame_mask.dtype != torch.bool:
-                raise ValueError(
-                    f"stream {name} has a mask of {stream.present_frame_mask.dtype}, not bool"
-                )
-            if stream.present_frame_mask.shape != stream.values.shape[:1]:
-                raise ValueError(
-                    f"stream {name} has {stream.values.size(0)} frames of values but a mask of "
-                    f"shape {tuple(stream.present_frame_mask.shape)}"
-                )
+            masks = {
+                "present_frame_mask": stream.present_frame_mask,
+                "target_frame_mask": stream.target_frame_mask,
+            }
+            for mask_name, mask in masks.items():
+                if mask.dtype != torch.bool:
+                    raise ValueError(f"stream {name} has a {mask_name} of {mask.dtype}, not bool")
+                if mask.shape != stream.values.shape[:1]:
+                    raise ValueError(
+                        f"stream {name} has {stream.values.size(0)} frames of values but a "
+                        f"{mask_name} of shape {tuple(mask.shape)}"
+                    )
             frame_counts[name] = stream.values.size(0)
         if len(set(frame_counts.values())) > 1:
             raise ValueError(f"the streams have different numbers of frames: {frame_counts}")
@@ -94,7 +102,11 @@ class AlignedStreams:
         window = slice(frames.start, frames.stop)
         return type(self)(
             {
-                name: FrameStream(stream.values[window], stream.present_frame_mask[window])
+                name: FrameStream(
+                    stream.values[window],
+                    stream.present_frame_mask[window],
+                    stream.target_frame_mask[window],
+                )
                 for name, stream in self.streams.items()
             }
         )
@@ -198,9 +210,9 @@ class StreamDelayer:
       gets ``padding_value`` at its end, so that no frame is lost. J-Moshi delays a whole
       recording this way before it cuts the recording into windows.
 
-    The frames that get ``initial_value`` or ``padding_value`` are present in the mask, since
-    the model reads these values. For example, a text stream ``t`` (delay 0, padding value
-    ``P``) and a codebook ``c`` (delay 1, initial value ``I``) of 3 frames give::
+    The frames that get ``initial_value`` or ``padding_value`` are present, since the model
+    reads these values, but are not targets. For example, a text stream ``t`` (delay 0,
+    padding value ``P``) and a codebook ``c`` (delay 1, initial value ``I``) of 3 frames give::
 
         frame                         0    1    2    3
         before the delay   text       t0   t1   t2
@@ -279,7 +291,14 @@ class StreamDelayer:
                     stream.present_frame_mask.new_ones(num_padding_frames),
                 ]
             )
-            return FrameStream(values, present_frame_mask)
+            target_frame_mask = torch.cat(
+                [
+                    stream.target_frame_mask.new_zeros(num_initial_frames),
+                    stream.target_frame_mask[:num_stream_frames],
+                    stream.target_frame_mask.new_zeros(num_padding_frames),
+                ]
+            )
+            return FrameStream(values, present_frame_mask, target_frame_mask)
 
         return AlignedStreams(
             {

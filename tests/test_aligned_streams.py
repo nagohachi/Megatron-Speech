@@ -1,4 +1,5 @@
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -17,24 +18,42 @@ NUM_CODEBOOKS = 8
 LATENT_SIZE = 4
 # Runs a test with windows cut every max_frames frames and with windows of even lengths.
 WITH_BOTH_SPLITS = pytest.mark.parametrize("split_evenly", [False, True])
+# Runs a test with each of the two masks of a stream.
+WITH_BOTH_MASKS = pytest.mark.parametrize("mask_name", ["present_frame_mask", "target_frame_mask"])
+
+
+def build_full_stream(values: torch.Tensor) -> FrameStream:
+    """Build a stream that has a value at every frame, each a target."""
+    all_frames = torch.ones(values.size(0), dtype=torch.bool)
+    return FrameStream(values, all_frames, all_frames)
 
 
 @pytest.fixture(name="streams")
 def build_aligned_streams() -> AlignedStreams:
     """Build text, codec codes and codec latents of 10 frames.
 
-    The audio is absent at frames 0 and 1, as at a prompt that holds only text.
+    Frames 0 and 1 are a prompt that holds only text: the audio is absent there, and the text is
+    not a target.
     """
     torch.manual_seed(0)
-    audio_frame_mask = torch.arange(NUM_FRAMES) >= 2
+    after_prompt_frame_mask = torch.arange(NUM_FRAMES) >= 2
     return AlignedStreams(
         {
-            "text": FrameStream(torch.arange(NUM_FRAMES), torch.ones(NUM_FRAMES, dtype=torch.bool)),
+            "text": FrameStream(
+                torch.arange(NUM_FRAMES),
+                torch.ones(NUM_FRAMES, dtype=torch.bool),
+                after_prompt_frame_mask,
+            ),
             "codes": FrameStream(
                 torch.arange(NUM_FRAMES * NUM_CODEBOOKS).view(NUM_FRAMES, NUM_CODEBOOKS),
-                audio_frame_mask,
+                after_prompt_frame_mask,
+                after_prompt_frame_mask,
             ),
-            "latents": FrameStream(torch.randn(NUM_FRAMES, LATENT_SIZE), audio_frame_mask),
+            "latents": FrameStream(
+                torch.randn(NUM_FRAMES, LATENT_SIZE),
+                after_prompt_frame_mask,
+                after_prompt_frame_mask,
+            ),
         }
     )
 
@@ -50,9 +69,12 @@ def test_takes_frames_of_every_stream(streams: AlignedStreams) -> None:
     assert window.num_frames == 4
     assert window.streams.keys() == streams.streams.keys()
     for name, stream in window.streams.items():
-        assert torch.equal(stream.values, streams.streams[name].values[1:5]), name
-        mask = streams.streams[name].present_frame_mask[1:5]
-        assert torch.equal(stream.present_frame_mask, mask), name
+        recording_stream = streams.streams[name]
+        assert torch.equal(stream.values, recording_stream.values[1:5]), name
+        present_frame_mask = recording_stream.present_frame_mask[1:5]
+        assert torch.equal(stream.present_frame_mask, present_frame_mask), name
+        target_frame_mask = recording_stream.target_frame_mask[1:5]
+        assert torch.equal(stream.target_frame_mask, target_frame_mask), name
 
 
 def test_rejects_frames_with_a_step(streams: AlignedStreams) -> None:
@@ -74,28 +96,37 @@ def test_rejects_streams_of_different_lengths() -> None:
     with pytest.raises(ValueError, match="different numbers of frames"):
         AlignedStreams(
             {
-                "text": FrameStream(torch.zeros(10), torch.ones(10, dtype=torch.bool)),
-                "codes": FrameStream(torch.zeros(9, 8), torch.ones(9, dtype=torch.bool)),
+                "text": build_full_stream(torch.zeros(10)),
+                "codes": build_full_stream(torch.zeros(9, 8)),
             }
         )
 
 
-def test_rejects_mask_of_another_length() -> None:
+@WITH_BOTH_MASKS
+def test_rejects_mask_of_another_length(mask_name: str) -> None:
     """Check that a mask with another number of frames than the values raises ValueError."""
-    with pytest.raises(ValueError, match="frames of values but a mask"):
-        AlignedStreams({"text": FrameStream(torch.zeros(10), torch.ones(9, dtype=torch.bool))})
+    stream = replace(
+        build_full_stream(torch.zeros(10)), **{mask_name: torch.ones(9, dtype=torch.bool)}
+    )
+    with pytest.raises(ValueError, match=f"frames of values but a {mask_name}"):
+        AlignedStreams({"text": stream})
 
 
-def test_rejects_mask_that_is_not_bool() -> None:
+@WITH_BOTH_MASKS
+def test_rejects_mask_that_is_not_bool(mask_name: str) -> None:
     """Check that a mask of ints raises ValueError instead of acting as a mask later."""
-    with pytest.raises(ValueError, match=r"stream text has a mask of torch\.int64, not bool"):
-        AlignedStreams({"text": FrameStream(torch.zeros(10), torch.ones(10, dtype=torch.int64))})
+    stream = replace(
+        build_full_stream(torch.zeros(10)), **{mask_name: torch.ones(10, dtype=torch.int64)}
+    )
+    with pytest.raises(ValueError, match=rf"stream text has a {mask_name} of torch\.int64"):
+        AlignedStreams({"text": stream})
 
 
 def test_rejects_values_without_frames() -> None:
     """Check that 0-dim values raise ValueError that names the stream."""
+    one_frame = torch.ones(1, dtype=torch.bool)
     with pytest.raises(ValueError, match="stream text has values without a frame dimension"):
-        AlignedStreams({"text": FrameStream(torch.tensor(1), torch.ones(1, dtype=torch.bool))})
+        AlignedStreams({"text": FrameStream(torch.tensor(1), one_frame, one_frame)})
 
 
 def test_rejects_no_streams() -> None:
@@ -178,16 +209,17 @@ MAX_DELAY = 2
 def build_undelayed_streams() -> AlignedStreams:
     """Build the streams of ``STREAM_DELAYS`` with 6 frames.
 
-    The latents are absent at frames 0 and 1, as at a prompt that holds only text.
+    The latents are absent at frames 0 and 1, as at a prompt that holds only text, and are
+    targets at the other frames.
     """
     torch.manual_seed(1)
-    all_frames = torch.ones(NUM_RECORDING_FRAMES, dtype=torch.bool)
     streams = {
-        name: FrameStream(torch.randint(2048, (NUM_RECORDING_FRAMES,)), all_frames)
+        name: build_full_stream(torch.randint(2048, (NUM_RECORDING_FRAMES,)))
         for name in ["text", "semantic", "acoustic", "late_acoustic"]
     }
+    latent_frame_mask = torch.arange(NUM_RECORDING_FRAMES) >= 2
     streams["latents"] = FrameStream(
-        torch.randn(NUM_RECORDING_FRAMES, LATENT_SIZE), torch.arange(NUM_RECORDING_FRAMES) >= 2
+        torch.randn(NUM_RECORDING_FRAMES, LATENT_SIZE), latent_frame_mask, latent_frame_mask
     )
     return AlignedStreams(streams)
 
@@ -243,15 +275,35 @@ def test_extends_length_as_jmoshi(undelayed_streams: AlignedStreams) -> None:
         (False, [True, False, False, True, True, True, True, True]),
     ],
 )
-def test_delays_mask_with_values(
+def test_delays_present_mask_with_values(
     undelayed_streams: AlignedStreams, keep_length: bool, expected_mask: list[bool]
 ) -> None:
-    """Check that the mask moves with the values, and that filled frames are present.
+    """Check that the present mask moves with the values, and that filled frames are present.
 
     The latents, delayed by one frame, are absent at the frames 0 and 1 before the delay.
     """
     delayed_streams = StreamDelayer(STREAM_DELAYS, keep_length).delay_streams(undelayed_streams)
     assert delayed_streams.streams["latents"].present_frame_mask.tolist() == expected_mask
+
+
+@pytest.mark.parametrize(
+    ("keep_length", "expected_mask"),
+    [
+        (True, [False, False, False, True, True, True]),
+        (False, [False, False, False, True, True, True, True, False]),
+    ],
+)
+def test_delays_target_mask_with_values(
+    undelayed_streams: AlignedStreams, keep_length: bool, expected_mask: list[bool]
+) -> None:
+    """Check that the target mask moves with the values, and that filled frames are not targets.
+
+    The latents, delayed by one frame, are targets at the frames 2 to 5 before the delay. The
+    first frame gets the initial value, and with ``keep_length=False`` the last frame gets the
+    padding value.
+    """
+    delayed_streams = StreamDelayer(STREAM_DELAYS, keep_length).delay_streams(undelayed_streams)
+    assert delayed_streams.streams["latents"].target_frame_mask.tolist() == expected_mask
 
 
 @pytest.mark.parametrize(
@@ -265,11 +317,10 @@ def test_matches_delay_example_of_docstring(
 
     The text is t0 to t2 = 10 to 12 with P = 3, and the codebook c0 to c2 = 20 to 22 with I = 99.
     """
-    all_frames = torch.ones(3, dtype=torch.bool)
     streams = AlignedStreams(
         {
-            "text": FrameStream(torch.tensor([10, 11, 12]), all_frames),
-            "codebook": FrameStream(torch.tensor([20, 21, 22]), all_frames),
+            "text": build_full_stream(torch.tensor([10, 11, 12])),
+            "codebook": build_full_stream(torch.tensor([20, 21, 22])),
         }
     )
     delays = {
@@ -290,7 +341,11 @@ def test_keeps_device_of_streams(undelayed_streams: AlignedStreams, keep_length:
     """
     streams_on_meta = AlignedStreams(
         {
-            name: FrameStream(stream.values.to("meta"), stream.present_frame_mask.to("meta"))
+            name: FrameStream(
+                stream.values.to("meta"),
+                stream.present_frame_mask.to("meta"),
+                stream.target_frame_mask.to("meta"),
+            )
             for name, stream in undelayed_streams.streams.items()
         }
     )
@@ -298,6 +353,7 @@ def test_keeps_device_of_streams(undelayed_streams: AlignedStreams, keep_length:
     for name, stream in delayed_streams.streams.items():
         assert stream.values.is_meta, name
         assert stream.present_frame_mask.is_meta, name
+        assert stream.target_frame_mask.is_meta, name
 
 
 def test_fills_window_shorter_than_delay(undelayed_streams: AlignedStreams) -> None:
