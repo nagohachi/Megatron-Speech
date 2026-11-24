@@ -1,9 +1,10 @@
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
-from itertools import count, islice
+from itertools import islice
 from pathlib import Path
 
 from lhotse import CutSet
+from lhotse.dataset import IterableDatasetWrapper, make_worker_init_fn
 from megatron.core import parallel_state
 from torch.utils.data import DataLoader
 
@@ -21,8 +22,25 @@ class AudioTextDataConfig:
     # Without directories, there is no validation.
     valid_shar_dirs: list[Path]
     token_bucketing: TokenBucketingConfig
-    # Number of worker processes on each rank, in which the audio is loaded and packed.
+    # Number of worker processes on each rank, in which the train micro-batches are sampled,
+    # loaded and packed.
     num_workers: int = 1
+
+    def __post_init__(self) -> None:
+        """Check that the train micro-batches are made outside the training process."""
+        if self.num_workers < 1:
+            raise ValueError(f"num_workers must be at least 1, got {self.num_workers}")
+
+
+def _list_shar_fields(shar_dirs: list[Path]) -> dict[str, list[Path]]:
+    """Return the cut and the recording files of the Shar shards in ``shar_dirs``, by field."""
+    fields = {"cuts": [], "recording": []}
+    for shar_dir in shar_dirs:
+        fields["cuts"] += sorted(shar_dir.glob("cuts.*.jsonl.gz"))
+        fields["recording"] += sorted(shar_dir.glob("recording.*.tar"))
+    if not fields["cuts"]:
+        raise ValueError(f"no Shar shards in {[str(shar_dir) for shar_dir in shar_dirs]}")
+    return fields
 
 
 class AudioTextDatasetsProvider:
@@ -69,52 +87,62 @@ class AudioTextDatasetsProvider:
         self.pad_to_multiple = pad_to_multiple
         self.num_microbatches_per_evaluation = num_microbatches_per_evaluation
 
-    def build_loader(
-        self,
-        shar_dirs: list[Path],
-        token_bucketing_config: TokenBucketingConfig,
-        data_parallel_rank: int,
-        data_parallel_size: int,
-    ) -> DataLoader:
-        """Build the loader of one epoch of the micro-batches of ``data_parallel_rank``.
+    def build_train_loader(self, data_parallel_rank: int, data_parallel_size: int) -> DataLoader:
+        """Build the loader of the train micro-batches of ``data_parallel_rank``, without an end.
 
-        All shards are read on every data parallel rank, in the same order, and the micro-batches
-        are divided among the ranks.
+        The sampler runs in the workers, so that the shards are read outside the training
+        process. The training data are not divided among the data parallel ranks: in each
+        worker of each rank, all shards are read over and over, each time in an order drawn from
+        the seed, the data parallel rank and the worker. The ranks of one data parallel group
+        read in the same order.
         """
-        fields = {"cuts": [], "recording": []}
-        for shar_dir in shar_dirs:
-            fields["cuts"] += sorted(shar_dir.glob("cuts.*.jsonl.gz"))
-            fields["recording"] += sorted(shar_dir.glob("recording.*.tar"))
-        if not fields["cuts"]:
-            raise ValueError(f"no Shar shards in {[str(shar_dir) for shar_dir in shar_dirs]}")
-        shuffle_shards = token_bucketing_config.shuffle
-        seed = token_bucketing_config.seed
+        token_bucketing_config = self.data_config.token_bucketing
+        fields = _list_shar_fields(self.data_config.train_shar_dirs)
         dataset = AudioTextDataset(self.example_builder, self.pad_to_multiple)
         sampler = build_token_bucketing_sampler(
-            CutSet.from_shar(fields=fields, shuffle_shards=shuffle_shards, seed=seed),
+            # "randomized" takes the seed that make_worker_init_fn gives each worker.
+            CutSet.from_shar(fields=fields, shuffle_shards=True, seed="randomized").repeat(),
+            dataset.calc_num_tokens,
+            token_bucketing_config,
+            rank=0,
+            world_size=1,
+            cuts_for_bins_estimate=CutSet.from_shar(
+                fields={"cuts": fields["cuts"]},
+                shuffle_shards=True,
+                seed=token_bucketing_config.seed,
+            ),
+        )
+        return DataLoader(
+            IterableDatasetWrapper(dataset, sampler),
+            batch_size=None,
+            num_workers=self.data_config.num_workers,
+            worker_init_fn=make_worker_init_fn(
+                rank=data_parallel_rank,
+                world_size=data_parallel_size,
+                seed=token_bucketing_config.seed,
+            ),
+        )
+
+    def build_valid_loader(self, data_parallel_rank: int, data_parallel_size: int) -> DataLoader:
+        """Build the loader of one pass of the validation micro-batches of ``data_parallel_rank``.
+
+        All shards are read on every data parallel rank, in their order, and the micro-batches
+        are divided among the ranks.
+        """
+        token_bucketing_config = replace(self.data_config.token_bucketing, shuffle=False)
+        fields = _list_shar_fields(self.data_config.valid_shar_dirs)
+        dataset = AudioTextDataset(self.example_builder, self.pad_to_multiple)
+        sampler = build_token_bucketing_sampler(
+            CutSet.from_shar(fields=fields),
             dataset.calc_num_tokens,
             token_bucketing_config,
             rank=data_parallel_rank,
             world_size=data_parallel_size,
-            # The bucket bounds need only the durations and the transcripts of the manifests.
-            cuts_for_bins_estimate=CutSet.from_shar(
-                fields={"cuts": fields["cuts"]}, shuffle_shards=shuffle_shards, seed=seed
-            ),
+            cuts_for_bins_estimate=CutSet.from_shar(fields={"cuts": fields["cuts"]}),
         )
         return DataLoader(
             dataset, sampler=sampler, batch_size=None, num_workers=self.data_config.num_workers
         )
-
-    def iterate_epochs(self, loader: DataLoader) -> Iterator[PackedAudioTextBatch]:
-        """Yield the micro-batches of ``loader`` epoch after epoch, each epoch in another order."""
-        for epoch in count():
-            loader.sampler.set_epoch(epoch)
-            num_microbatches_read = 0
-            for batch in loader:
-                num_microbatches_read += 1
-                yield batch
-            if not num_microbatches_read:
-                raise RuntimeError("the training data have no micro-batch on this rank")
 
     def iterate_evaluations(
         self, loader: Iterable[PackedAudioTextBatch]
@@ -140,36 +168,19 @@ class AudioTextDatasetsProvider:
     ) -> tuple[Iterator[PackedAudioTextBatch], Iterator[PackedAudioTextBatch] | None, None]:
         """Build the iterators of the micro-batches of this rank.
 
-        ``train_valid_test_num_samples`` is not used: the number of micro-batches of an epoch
-        depends on the lengths of the utterances.
+        ``train_valid_test_num_samples`` is not used: the train micro-batches have no end, and
+        the number of validation micro-batches depends on the lengths of the utterances.
 
         Returns
         -------
         tuple
-            The train micro-batches, epoch after epoch; the validation micro-batches, the same
-            at every evaluation, or None without validation data; and None for the test.
+            The train micro-batches, without an end; the validation micro-batches, the same at
+            every evaluation, or None without validation data; and None for the test.
         """
         data_parallel_rank = parallel_state.get_data_parallel_rank()
         data_parallel_size = parallel_state.get_data_parallel_world_size()
-        token_bucketing_config = self.data_config.token_bucketing
-        train_iterator = self.iterate_epochs(
-            self.build_loader(
-                self.data_config.train_shar_dirs,
-                token_bucketing_config,
-                data_parallel_rank,
-                data_parallel_size,
-            )
-        )
+        train_iterator = iter(self.build_train_loader(data_parallel_rank, data_parallel_size))
         if not self.data_config.valid_shar_dirs:
             return train_iterator, None, None
-        valid_loader = self.build_loader(
-            self.data_config.valid_shar_dirs,
-            replace(token_bucketing_config, shuffle=False),
-            data_parallel_rank,
-            data_parallel_size,
-        )
-        return (
-            train_iterator,
-            self.iterate_evaluations(valid_loader),
-            None,
-        )
+        valid_loader = self.build_valid_loader(data_parallel_rank, data_parallel_size)
+        return train_iterator, self.iterate_evaluations(valid_loader), None

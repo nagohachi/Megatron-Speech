@@ -1,5 +1,5 @@
 import re
-from dataclasses import replace
+from copy import deepcopy
 from itertools import islice
 from pathlib import Path
 
@@ -9,7 +9,6 @@ import soundfile as sf
 import torch
 from lhotse import CutSet, Recording, SupervisionSegment
 from lhotse.utils import compute_num_samples
-from torch.utils.data import DataLoader, DistributedSampler
 
 from megatron_speech.data.dataset import AudioTextDataset, AudioTextExampleBuilder
 from megatron_speech.data.packing import AudioTextExample, PackedAudioTextBatch
@@ -19,9 +18,14 @@ from megatron_speech.data.sampling import TokenBucketingConfig
 SAMPLING_RATE = 16000
 SAMPLES_PER_AUDIO_TOKEN = 1600
 PAD_TO_MULTIPLE = 4
+# The train cuts have no end; with the default buffer of 20000 cuts, the 40 utterances would be
+# read 500 times before the first micro-batch.
 TOKEN_BUCKETING_CONFIG = TokenBucketingConfig(
-    max_tokens_per_batch=100, max_tokens_per_example=60, num_buckets=3
+    max_tokens_per_batch=100, max_tokens_per_example=60, num_buckets=3, buffer_size=50
 )
+# At about 4 utterances per micro-batch, about 6 reads of the 40 utterances. An utterance can
+# wait in the buffer while other buckets are sampled, and 30 micro-batches missed one.
+NUM_TRAIN_BATCHES = 60
 # Lengths of the utterances in samples. They all differ, so that a waveform tells its utterance.
 UTTERANCE_LENGTHS = [8000 + 397 * index for index in range(40)]
 
@@ -124,69 +128,85 @@ def build_provider(shar_dir: Path) -> AudioTextDatasetsProvider:
     )
 
 
-@pytest.fixture(name="batches_of_ranks", scope="module")
-def build_batches_of_ranks(
-    provider: AudioTextDatasetsProvider, shar_dir: Path
+@pytest.fixture(name="train_batches_of_ranks", scope="module")
+def build_train_batches_of_ranks(
+    provider: AudioTextDatasetsProvider,
 ) -> list[list[PackedAudioTextBatch]]:
-    """Load one epoch on each of two data parallel ranks; return the micro-batches by rank."""
+    """Load the first train micro-batches of two data parallel ranks; return them by rank.
+
+    The micro-batches are copied, so that the shared memory of each tensor from the workers,
+    which holds a file descriptor, is released.
+    """
     return [
-        list(provider.build_loader([shar_dir], TOKEN_BUCKETING_CONFIG, rank, 2))
+        [
+            deepcopy(batch)
+            for batch in islice(provider.build_train_loader(rank, 2), NUM_TRAIN_BATCHES)
+        ]
         for rank in range(2)
     ]
 
 
+@pytest.fixture(name="valid_batches_of_ranks", scope="module")
+def build_valid_batches_of_ranks(
+    provider: AudioTextDatasetsProvider,
+) -> list[list[PackedAudioTextBatch]]:
+    """Load one pass of the validation micro-batches of two data parallel ranks, by rank."""
+    return [list(provider.build_valid_loader(rank, 2)) for rank in range(2)]
+
+
 def test_batches_stay_within_token_limit(
-    batches_of_ranks: list[list[PackedAudioTextBatch]],
+    train_batches_of_ranks: list[list[PackedAudioTextBatch]],
+    valid_batches_of_ranks: list[list[PackedAudioTextBatch]],
 ) -> None:
     """Check that no packed row, padding included, is longer than ``max_tokens_per_batch``."""
-    for batches in batches_of_ranks:
+    for batches in [*train_batches_of_ranks, *valid_batches_of_ranks]:
         for batch in batches:
             assert batch.cu_seqlens[-1] <= TOKEN_BUCKETING_CONFIG.max_tokens_per_batch
 
 
-def test_ranks_take_every_utterance_once(
-    batches_of_ranks: list[list[PackedAudioTextBatch]],
+def test_train_ranks_read_every_utterance(
+    train_batches_of_ranks: list[list[PackedAudioTextBatch]],
 ) -> None:
-    """Check that the data parallel ranks together take each utterance once in an epoch."""
+    """Check that the train data are not divided: each rank reads every utterance."""
+    for batches in train_batches_of_ranks:
+        lengths = {len(waveform) for batch in batches for waveform in batch.waveforms}
+        assert lengths == set(UTTERANCE_LENGTHS)
+
+
+def test_train_ranks_read_in_different_orders(
+    train_batches_of_ranks: list[list[PackedAudioTextBatch]],
+) -> None:
+    """Check that the two data parallel ranks get different train micro-batches."""
+    batches_of_rank0, batches_of_rank1 = train_batches_of_ranks
+    assert not torch.equal(batches_of_rank0[0].input_ids, batches_of_rank1[0].input_ids)
+
+
+def test_train_loaders_of_one_rank_give_same_batches(
+    train_batches_of_ranks: list[list[PackedAudioTextBatch]],
+    provider: AudioTextDatasetsProvider,
+) -> None:
+    """Check that another train loader of rank 0, as on another tensor parallel rank, agrees."""
+    batches = islice(provider.build_train_loader(0, 2), NUM_TRAIN_BATCHES)
+    for batch, batch_of_rank0 in zip(batches, train_batches_of_ranks[0], strict=True):
+        assert torch.equal(batch.input_ids, batch_of_rank0.input_ids)
+
+
+def test_valid_ranks_take_every_utterance_once(
+    valid_batches_of_ranks: list[list[PackedAudioTextBatch]],
+) -> None:
+    """Check that the data parallel ranks together take each validation utterance once."""
     lengths = [
         len(waveform)
-        for batches in batches_of_ranks
+        for batches in valid_batches_of_ranks
         for batch in batches
         for waveform in batch.waveforms
     ]
     assert sorted(lengths) == UTTERANCE_LENGTHS
 
 
-def test_loaders_of_one_rank_give_same_batches(
-    batches_of_ranks: list[list[PackedAudioTextBatch]],
-    provider: AudioTextDatasetsProvider,
-    shar_dir: Path,
-) -> None:
-    """Check that another loader of rank 0, as on another tensor parallel rank, gives the same."""
-    batches = list(provider.build_loader([shar_dir], TOKEN_BUCKETING_CONFIG, 0, 2))
-    assert len(batches) == len(batches_of_ranks[0])
-    for batch, batch_of_rank0 in zip(batches, batches_of_ranks[0], strict=True):
-        assert torch.equal(batch.input_ids, batch_of_rank0.input_ids)
-
-
-def test_epochs_take_every_utterance_in_another_order(
-    provider: AudioTextDatasetsProvider, shar_dir: Path
-) -> None:
-    """Check that the train iterator goes on to a second epoch, in another order."""
-    loader = provider.build_loader([shar_dir], TOKEN_BUCKETING_CONFIG, 0, 1)
-    lengths = []
-    for batch in provider.iterate_epochs(loader):
-        lengths += [len(waveform) for waveform in batch.waveforms]
-        if len(lengths) >= 2 * len(UTTERANCE_LENGTHS):
-            break
-    first_epoch, second_epoch = lengths[: len(UTTERANCE_LENGTHS)], lengths[len(UTTERANCE_LENGTHS) :]
-    assert sorted(first_epoch) == sorted(second_epoch) == UTTERANCE_LENGTHS
-    assert first_epoch != second_epoch
-
-
-def test_evaluations_take_same_batches(provider: AudioTextDatasetsProvider, shar_dir: Path) -> None:
-    """Check that each evaluation, also one longer than an epoch, takes the same micro-batches."""
-    loader = provider.build_loader([shar_dir], replace(TOKEN_BUCKETING_CONFIG, shuffle=False), 0, 1)
+def test_evaluations_take_same_batches(provider: AudioTextDatasetsProvider) -> None:
+    """Check that each evaluation, also one longer than a pass, takes the same micro-batches."""
+    loader = provider.build_valid_loader(0, 1)
     num_microbatches_per_evaluation = len(list(loader)) + 2
     provider_of_long_evaluations = AudioTextDatasetsProvider(
         provider.data_config, CharExampleBuilder(), PAD_TO_MULTIPLE, num_microbatches_per_evaluation
@@ -203,13 +223,6 @@ def test_evaluations_take_same_batches(provider: AudioTextDatasetsProvider, shar
         strict=True,
     ):
         assert torch.equal(batch.input_ids, batch_of_first_evaluation.input_ids)
-
-
-def test_epochs_reject_empty_data(provider: AudioTextDatasetsProvider) -> None:
-    """Check that training data without micro-batches is rejected instead of read forever."""
-    loader = DataLoader([], sampler=DistributedSampler([], num_replicas=1, rank=0), batch_size=None)
-    with pytest.raises(RuntimeError, match="no micro-batch"):
-        next(provider.iterate_epochs(loader))
 
 
 def test_evaluations_reject_empty_data(provider: AudioTextDatasetsProvider) -> None:
@@ -235,12 +248,18 @@ def test_provider_without_validation_data_needs_no_evaluations(shar_dir: Path) -
     AudioTextDatasetsProvider(data_config, CharExampleBuilder(), PAD_TO_MULTIPLE, 0)
 
 
-def test_loader_rejects_directories_without_shards(
-    provider: AudioTextDatasetsProvider, tmp_path: Path
-) -> None:
+def test_data_config_rejects_no_workers(shar_dir: Path) -> None:
+    """Check that training without workers, which would sample in the training process, fails."""
+    with pytest.raises(ValueError, match="num_workers"):
+        AudioTextDataConfig([shar_dir], [], TOKEN_BUCKETING_CONFIG, num_workers=0)
+
+
+def test_loader_rejects_directories_without_shards(tmp_path: Path) -> None:
     """Check that directories without Shar shards are rejected with their paths."""
+    data_config = AudioTextDataConfig([tmp_path], [], TOKEN_BUCKETING_CONFIG)
+    provider = AudioTextDatasetsProvider(data_config, CharExampleBuilder(), PAD_TO_MULTIPLE, 0)
     with pytest.raises(ValueError, match=re.escape(str(tmp_path))):
-        provider.build_loader([tmp_path], TOKEN_BUCKETING_CONFIG, 0, 1)
+        provider.build_train_loader(0, 1)
 
 
 @pytest.mark.gpu
