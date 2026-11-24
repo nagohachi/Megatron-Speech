@@ -54,10 +54,11 @@ class TextStreamBuilder:
             )
 
     def build(self, timed_tokens: list[TimedTokens], num_frames: int) -> torch.Tensor:
-        """Place ``timed_tokens`` on ``num_frames`` frames; return the ``[num_frames]`` tokens.
+        """Make the text for ``num_frames`` frames of audio from the words of ``timed_tokens``.
 
-        ``timed_tokens`` is placed in the order of the start times. The tokens that do not fit
-        before the end of the frames are dropped. A start time before 0 raises ValueError.
+        Return the ``[num_frames]`` token ids, one for each frame. The words are placed in the
+        order of their start times. The tokens that do not fit before the last frame are
+        dropped. A start time before 0 raises ValueError.
         """
         ordered_timed_tokens = sorted(timed_tokens, key=lambda token_group: token_group.start_time)
         start_frames = [
