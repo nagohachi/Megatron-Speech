@@ -4,7 +4,13 @@ import numpy as np
 import pytest
 import torch
 
-from megatron_speech.data.aligned_streams import AlignedStreams, FrameStream, WindowSplitter
+from megatron_speech.data.aligned_streams import (
+    AlignedStreams,
+    FrameStream,
+    StreamDelay,
+    StreamDelayer,
+    WindowSplitter,
+)
 
 NUM_FRAMES = 10
 NUM_CODEBOOKS = 8
@@ -152,3 +158,150 @@ def test_rejects_min_frames_above_max_frames() -> None:
     """Check that ``min_frames`` above ``max_frames`` raises ValueError at construction."""
     with pytest.raises(ValueError, match="min_frames must be from 0 to max_frames"):
         WindowSplitter(max_frames=4, split_evenly=False, min_frames=5)
+
+
+# Streams of a recording as Moshi reads it, with Moshi's initial and padding tokens: the text
+# and the first codebook are not delayed, an acoustic codebook is delayed by one frame, as in
+# Moshi, and by two frames, to test longer delays. A stream of codec latents is delayed by one.
+STREAM_DELAYS = {
+    "text": StreamDelay(delay=0, initial_value=32000, padding_value=3),
+    "semantic": StreamDelay(delay=0, initial_value=2048, padding_value=2048),
+    "acoustic": StreamDelay(delay=1, initial_value=2048, padding_value=2048),
+    "late_acoustic": StreamDelay(delay=2, initial_value=2048, padding_value=2048),
+    "latents": StreamDelay(delay=1, initial_value=0.0, padding_value=0.0),
+}
+NUM_DELAYED_FRAMES = 6
+MAX_DELAY = 2
+
+
+@pytest.fixture(name="undelayed_streams")
+def build_undelayed_streams() -> AlignedStreams:
+    """Build the streams of ``STREAM_DELAYS`` with 6 frames.
+
+    The latents are absent at frames 0 and 1, as at a prompt that holds only text.
+    """
+    torch.manual_seed(1)
+    all_frames = torch.ones(NUM_DELAYED_FRAMES, dtype=torch.bool)
+    streams = {
+        name: FrameStream(torch.randint(2048, (NUM_DELAYED_FRAMES,)), all_frames)
+        for name in ["text", "semantic", "acoustic", "late_acoustic"]
+    }
+    streams["latents"] = FrameStream(
+        torch.randn(NUM_DELAYED_FRAMES, LATENT_SIZE), torch.arange(NUM_DELAYED_FRAMES) >= 2
+    )
+    return AlignedStreams(streams)
+
+
+def run_kyutai_delay(values: torch.Tensor, stream_delay: StreamDelay) -> torch.Tensor:
+    """Delay one stream as Kyutai's ``_delay_sequence``: roll it and fill its first frames."""
+    delayed_values = values.roll(stream_delay.delay, dims=0)
+    delayed_values[: stream_delay.delay] = stream_delay.initial_value
+    return delayed_values
+
+
+def run_jmoshi_delay(values: torch.Tensor, stream_delay: StreamDelay) -> torch.Tensor:
+    """Delay one stream as J-Moshi's ``delay_and_pad_streams``, by up to ``MAX_DELAY`` frames.
+
+    J-Moshi also puts a frame of initial tokens in front of every stream, which is the shift of
+    the input by one frame and not a part of the delay.
+    """
+    num_frames = values.size(0)
+    delay = stream_delay.delay
+    delayed_values = torch.empty((num_frames + MAX_DELAY, *values.shape[1:]), dtype=values.dtype)
+    delayed_values[:delay] = stream_delay.initial_value
+    delayed_values[delay : delay + num_frames] = values
+    delayed_values[delay + num_frames :] = stream_delay.padding_value
+    return delayed_values
+
+
+def test_keeps_length_as_kyutai(undelayed_streams: AlignedStreams) -> None:
+    """Check that ``keep_length=True`` delays each stream as Kyutai's moshi-finetune does."""
+    delayed_streams = StreamDelayer(STREAM_DELAYS, keep_length=True).delay_streams(
+        undelayed_streams
+    )
+    assert delayed_streams.num_frames == NUM_DELAYED_FRAMES
+    for name, stream in delayed_streams.streams.items():
+        expected = run_kyutai_delay(undelayed_streams.streams[name].values, STREAM_DELAYS[name])
+        assert torch.equal(stream.values, expected), name
+
+
+def test_extends_length_as_jmoshi(undelayed_streams: AlignedStreams) -> None:
+    """Check that ``keep_length=False`` delays each stream as J-Moshi does."""
+    delayed_streams = StreamDelayer(STREAM_DELAYS, keep_length=False).delay_streams(
+        undelayed_streams
+    )
+    assert delayed_streams.num_frames == NUM_DELAYED_FRAMES + MAX_DELAY
+    for name, stream in delayed_streams.streams.items():
+        expected = run_jmoshi_delay(undelayed_streams.streams[name].values, STREAM_DELAYS[name])
+        assert torch.equal(stream.values, expected), name
+
+
+@pytest.mark.parametrize(
+    ("keep_length", "expected_mask"),
+    [
+        (True, [True, False, False, True, True, True]),
+        (False, [True, False, False, True, True, True, True, True]),
+    ],
+)
+def test_delays_mask_with_values(
+    undelayed_streams: AlignedStreams, keep_length: bool, expected_mask: list[bool]
+) -> None:
+    """Check that the mask moves with the values, and that filled frames are present.
+
+    The latents, delayed by one frame, are absent at the frames 0 and 1 before the delay.
+    """
+    delayed_streams = StreamDelayer(STREAM_DELAYS, keep_length).delay_streams(undelayed_streams)
+    assert delayed_streams.streams["latents"].present_frame_mask.tolist() == expected_mask
+
+
+@pytest.mark.parametrize(
+    ("keep_length", "expected_text", "expected_codebook"),
+    [(True, [10, 11, 12], [99, 20, 21]), (False, [10, 11, 12, 3], [99, 20, 21, 22])],
+)
+def test_matches_delay_example_of_docstring(
+    keep_length: bool, expected_text: list[int], expected_codebook: list[int]
+) -> None:
+    """Check that the delayer gives the streams that the docstring of ``StreamDelayer`` shows.
+
+    The text is t0 to t2 = 10 to 12 with P = 3, and the codebook c0 to c2 = 20 to 22 with I = 99.
+    """
+    all_frames = torch.ones(3, dtype=torch.bool)
+    streams = AlignedStreams(
+        {
+            "text": FrameStream(torch.tensor([10, 11, 12]), all_frames),
+            "codebook": FrameStream(torch.tensor([20, 21, 22]), all_frames),
+        }
+    )
+    delays = {
+        "text": StreamDelay(delay=0, initial_value=99, padding_value=3),
+        "codebook": StreamDelay(delay=1, initial_value=99, padding_value=99),
+    }
+    delayed_streams = StreamDelayer(delays, keep_length).delay_streams(streams)
+    assert delayed_streams.streams["text"].values.tolist() == expected_text
+    assert delayed_streams.streams["codebook"].values.tolist() == expected_codebook
+
+
+def test_fills_window_shorter_than_delay(undelayed_streams: AlignedStreams) -> None:
+    """Check that a window shorter than a delay keeps its length, with the initial value only."""
+    window = undelayed_streams.take_frames(range(0, 1))
+    delayed_window = StreamDelayer(STREAM_DELAYS, keep_length=True).delay_streams(window)
+    assert delayed_window.num_frames == 1
+    assert delayed_window.streams["late_acoustic"].values.tolist() == [2048]
+
+
+@pytest.mark.parametrize("keep_length", [False, True])
+def test_rejects_streams_other_than_delays(
+    undelayed_streams: AlignedStreams, keep_length: bool
+) -> None:
+    """Check that a recording with streams that ``delays`` does not name raises ValueError."""
+    delays = {name: STREAM_DELAYS[name] for name in ["text", "semantic"]}
+    with pytest.raises(ValueError, match="but delays has"):
+        StreamDelayer(delays, keep_length).delay_streams(undelayed_streams)
+
+
+def test_rejects_negative_delay() -> None:
+    """Check that a negative delay raises ValueError when the delayer is made."""
+    with pytest.raises(ValueError, match="stream text has a negative delay of -1"):
+        StreamDelayer(
+            {"text": StreamDelay(delay=-1, initial_value=0, padding_value=0)}, keep_length=True
+        )
