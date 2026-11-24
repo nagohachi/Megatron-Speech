@@ -46,6 +46,12 @@ def build_speech_llm(config: SpeechLLMConfig, pg_collection: ProcessGroupCollect
                 "a MimoModel with every module on every rank needs "
                 f"pipeline_model_parallel_size=1, got {transformer.pipeline_model_parallel_size}"
             )
+        # The target loss over packed rows is tested without context parallelism only.
+        if transformer.context_parallel_size != 1:
+            raise ValueError(
+                "the speech LLM does not support context parallelism; it needs "
+                f"context_parallel_size=1, got {transformer.context_parallel_size}"
+            )
         if config.projector.input_size != config.encoder.d_model:
             raise ValueError(
                 f"projector.input_size={config.projector.input_size} differs from "
