@@ -104,35 +104,34 @@ class AlignedStreams:
 class WindowSplitter:
     """Splitter of a long recording into windows that fit the model's sequence, for training.
 
-    A recording longer than ``max_num_frames`` frames is trained on in windows of at most
-    ``max_num_frames`` frames. ``split_evenly``, a name of this code, chooses where the
+    A recording longer than ``max_frames`` frames is trained on in windows of at most
+    ``max_frames`` frames. ``split_evenly``, a name of this code, chooses where the
     windows start.
 
-    - False: a window starts every ``max_num_frames`` frames from the start of the recording,
+    - False: a window starts every ``max_frames`` frames from the start of the recording,
       so that only the last window can be shorter. Kyutai's moshi-finetune cuts its windows this
       way and then pads the last one to the same length; here it stays shorter, and packing
       puts windows of different lengths into one row.
-    - True: the recording is split into the fewest windows of at most ``max_num_frames``
+    - True: the recording is split into the fewest windows of at most ``max_frames``
       frames, whose lengths differ by at most one frame, as J-Moshi does with
       ``numpy.array_split``.
 
-    Windows shorter than ``min_num_frames`` frames are dropped, as J-Moshi's ``min_length``
-    does. For example, 10 frames with ``max_num_frames=4`` give the windows of frames 0-3, 4-7
+    Windows shorter than ``min_frames`` frames are dropped, as J-Moshi's ``min_length``
+    does. For example, 10 frames with ``max_frames=4`` give the windows of frames 0-3, 4-7
     and 8-9 with False, and of frames 0-3, 4-6 and 7-9 with True.
     """
 
-    max_num_frames: int
+    max_frames: int
     split_evenly: bool
-    min_num_frames: int
+    min_frames: int
 
     def __post_init__(self) -> None:
-        """Check that a window can hold a frame and that ``min_num_frames`` fits in a window."""
-        if self.max_num_frames < 1:
-            raise ValueError(f"max_num_frames must be at least 1, got {self.max_num_frames}")
-        if not 0 <= self.min_num_frames <= self.max_num_frames:
+        """Check that a window can hold a frame and that ``min_frames`` fits in a window."""
+        if self.max_frames < 1:
+            raise ValueError(f"max_frames must be at least 1, got {self.max_frames}")
+        if not 0 <= self.min_frames <= self.max_frames:
             raise ValueError(
-                f"min_num_frames must be from 0 to max_num_frames={self.max_num_frames}, "
-                f"got {self.min_num_frames}"
+                f"min_frames must be from 0 to max_frames={self.max_frames}, got {self.min_frames}"
             )
 
     def split(self, num_frames: int) -> list[range]:
@@ -150,17 +149,17 @@ class WindowSplitter:
             ``AlignedStreams.take_frames`` takes.
         """
         if self.split_evenly:
-            num_windows = math.ceil(num_frames / self.max_num_frames)
+            num_windows = math.ceil(num_frames / self.max_frames)
             # As numpy.array_split: the first num_frames % num_windows windows are one longer.
             shorter_length, num_longer = divmod(num_frames, max(num_windows, 1))
             lengths = [shorter_length + (index < num_longer) for index in range(num_windows)]
         else:
             lengths = [
-                min(self.max_num_frames, num_frames - start)
-                for start in range(0, num_frames, self.max_num_frames)
+                min(self.max_frames, num_frames - start)
+                for start in range(0, num_frames, self.max_frames)
             ]
         starts = list(accumulate(lengths, initial=0))[:-1]
         windows = [
             range(start, start + length) for start, length in zip(starts, lengths, strict=True)
         ]
-        return [window for window in windows if len(window) >= self.min_num_frames]
+        return [window for window in windows if len(window) >= self.min_frames]
