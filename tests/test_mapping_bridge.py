@@ -161,29 +161,46 @@ def test_export_restores_hf_weights(
     check_export_restores_hf_weights(BRIDGE, model, hf_dir, dtype)
 
 
-def test_save_restores_safetensors_checkpoint(
-    model: SpeechLanguageModel, safetensors_dir: Path, dtype: torch.dtype
-) -> None:
-    """Check that saving the model in the layout of ``safetensors_dir`` writes back every file.
-
-    The model's weights come back as the source weights rounded to ``dtype``; the codec weights
-    and the tokenizer file come back unchanged, and no config.json is added.
-    """
+@pytest.fixture(name="saved_dir")
+def build_saved_checkpoint(model: SpeechLanguageModel, safetensors_dir: Path) -> Path:
+    """Save the model in the layout of ``safetensors_dir`` and return the directory."""
     saved_dir = safetensors_dir.with_name("saved")
     BRIDGE.save_safetensors_checkpoint([model], SafeTensorsCheckpoint(safetensors_dir), saved_dir)
+    return saved_dir
+
+
+def test_save_keeps_layout_of_checkpoint(saved_dir: Path, safetensors_dir: Path) -> None:
+    """Check that the saved directory has the files and weight names of ``safetensors_dir``.
+
+    No config.json is added.
+    """
     assert sorted(path.name for path in saved_dir.iterdir()) == sorted(
         path.name for path in safetensors_dir.iterdir()
     )
+    for weight_file in safetensors_dir.glob("*.safetensors"):
+        saved_weights = load_file(saved_dir / weight_file.name)
+        assert saved_weights.keys() == load_file(weight_file).keys(), weight_file.name
+
+
+def test_save_copies_what_model_does_not_hold(saved_dir: Path, safetensors_dir: Path) -> None:
+    """Check that the codec weights and the tokenizer file come back unchanged."""
     tokenizer_bytes = (saved_dir / TOKENIZER_FILE).read_bytes()
     assert tokenizer_bytes == (safetensors_dir / TOKENIZER_FILE).read_bytes()
+    for file_name, weight_name in CODEC_WEIGHT_NAMES.items():
+        saved_weight = load_file(saved_dir / file_name)[weight_name]
+        source_weight = load_file(safetensors_dir / file_name)[weight_name]
+        assert saved_weight.dtype == source_weight.dtype, weight_name
+        assert torch.equal(saved_weight, source_weight), weight_name
+
+
+def test_save_writes_model_weights(
+    saved_dir: Path, safetensors_dir: Path, dtype: torch.dtype
+) -> None:
+    """Check that the model's weights come back as the source weights rounded to ``dtype``."""
     codec_weight_names = set(CODEC_WEIGHT_NAMES.values())
-    for file_name in CODEC_WEIGHT_NAMES:
-        source_weights = load_file(safetensors_dir / file_name)
-        saved_weights = load_file(saved_dir / file_name)
-        assert saved_weights.keys() == source_weights.keys(), file_name
-        for name, tensor in saved_weights.items():
-            expected = source_weights[name]
-            if name not in codec_weight_names:
-                expected = expected.to(dtype)
-            assert tensor.dtype == expected.dtype, name
-            assert torch.equal(tensor, expected), name
+    for weight_file in safetensors_dir.glob("*.safetensors"):
+        source_weights = load_file(weight_file)
+        saved_weights = load_file(saved_dir / weight_file.name)
+        for name in source_weights.keys() - codec_weight_names:
+            assert saved_weights[name].dtype == dtype, name
+            assert torch.equal(saved_weights[name], source_weights[name].to(dtype)), name
