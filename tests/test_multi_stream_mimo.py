@@ -163,16 +163,22 @@ def build_mimo_config(
     )
 
 
+@pytest.fixture(name="audio_decoder_spec")
+def build_audio_decoder_spec(dtype: torch.dtype) -> ModuleSpec:
+    """Build the spec of ``LinearAudioDecoder`` in ``dtype``."""
+    return ModuleSpec(module=LinearAudioDecoder, params={"params_dtype": dtype})
+
+
 @pytest.fixture(name="model")
 def build_model(
-    transformer_config: TransformerConfig, dtype: torch.dtype, kv_format: str
+    transformer_config: TransformerConfig, audio_decoder_spec: ModuleSpec, kv_format: str
 ) -> MultiStreamMimoModel:
     """Build the model under test with ``LinearAudioDecoder`` as its audio decoder."""
     torch.manual_seed(0)
     model_parallel_cuda_manual_seed(0)
     return MultiStreamMimoModel(
         build_mimo_config(transformer_config, MultiStreamLanguageModel, kv_format),
-        ModuleSpec(module=LinearAudioDecoder, params={"params_dtype": dtype}),
+        audio_decoder_spec,
         TEXT_LOSS_WEIGHT,
         AUDIO_LOSS_WEIGHT,
         tp_group=parallel_state.get_tensor_model_parallel_group(),
@@ -501,27 +507,27 @@ def test_rejects_positions_of_another_count(
 
 
 def test_rejects_language_model_of_another_class(
-    transformer_config: TransformerConfig, dtype: torch.dtype, kv_format: str
+    transformer_config: TransformerConfig, audio_decoder_spec: ModuleSpec, kv_format: str
 ) -> None:
     """Check that an LLM other than ``MultiStreamLanguageModel`` raises ValueError."""
     with pytest.raises(ValueError, match="must be MultiStreamLanguageModel"):
         MultiStreamMimoModel(
             build_mimo_config(transformer_config, GPTModel, kv_format),
-            ModuleSpec(module=LinearAudioDecoder, params={"params_dtype": dtype}),
+            audio_decoder_spec,
             TEXT_LOSS_WEIGHT,
             AUDIO_LOSS_WEIGHT,
         )
 
 
 def test_rejects_context_parallelism(
-    transformer_config: TransformerConfig, dtype: torch.dtype, kv_format: str
+    transformer_config: TransformerConfig, audio_decoder_spec: ModuleSpec, kv_format: str
 ) -> None:
     """Check that an LLM config with context parallelism raises ValueError."""
     context_parallel_config = replace(transformer_config, context_parallel_size=2)
     with pytest.raises(ValueError, match="context_parallel_size=2"):
         MultiStreamMimoModel(
             build_mimo_config(context_parallel_config, MultiStreamLanguageModel, kv_format),
-            ModuleSpec(module=LinearAudioDecoder, params={"params_dtype": dtype}),
+            audio_decoder_spec,
             TEXT_LOSS_WEIGHT,
             AUDIO_LOSS_WEIGHT,
         )
