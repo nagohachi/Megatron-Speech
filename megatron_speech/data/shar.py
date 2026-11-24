@@ -36,8 +36,9 @@ def main(argv: list[str] | None = None) -> None:
     for part, cuts in recipe.build_cuts(args.corpus_dir, args.parts, args.num_jobs).items():
         part_dir = args.output_dir / part
         part_dir.mkdir(parents=True, exist_ok=True)
+        normalized_cuts = cuts.transform_text(recipe.normalize_transcript)
         # Utterances may come grouped by speaker; they are shuffled to mix speakers in each shard.
-        cuts.transform_text(recipe.normalize_transcript).shuffle(random.Random(args.seed)).to_shar(
+        normalized_cuts.shuffle(random.Random(args.seed)).to_shar(
             part_dir,
             fields={"recording": "flac"},
             shard_size=args.shard_size,
