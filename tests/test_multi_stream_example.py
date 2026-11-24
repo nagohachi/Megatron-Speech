@@ -296,6 +296,31 @@ def test_reads_prompt_without_predicting_it() -> None:
     assert example.audio_decoder_positions.tolist() == [2, 3, 4]
 
 
+def test_builds_window_without_targets() -> None:
+    """Check that a window without targets, such as one of a prompt only, gives empty audio inputs.
+
+    The text is read at every position but is no target, and the audio is absent.
+    """
+    no_frames = torch.zeros(6, dtype=torch.bool)
+    window = AlignedStreams(
+        {
+            "text": FrameStream(torch.arange(6), torch.ones(6, dtype=torch.bool), no_frames),
+            "semantic": FrameStream(torch.arange(6), no_frames, no_frames),
+            "latents": FrameStream(torch.randn(6, 4), no_frames, no_frames),
+        }
+    )
+    example = MultiStreamExampleBuilder(["semantic", "latents"], {}).build(window)
+    assert example.loss_mask.dtype == torch.float32
+    assert example.loss_mask.tolist() == [0, 0, 0, 0, 0]
+    assert example.stream_inputs["latents"].shape == (0, 4)
+    assert example.audio_decoder_positions.dtype == torch.int64
+    assert example.audio_decoder_positions.shape == (0,)
+    assert example.audio_targets["semantic"].shape == (0,)
+    assert example.audio_targets["latents"].shape == (0, 4)
+    assert example.audio_target_masks["latents"].dtype == torch.bool
+    assert example.audio_target_masks["latents"].shape == (0,)
+
+
 @pytest.mark.parametrize("missing_name", ["text", "acoustic"])
 def test_rejects_window_without_stream(window: AlignedStreams, missing_name: str) -> None:
     """Check that a window without the text or a stream of the audio decoder raises ValueError."""
