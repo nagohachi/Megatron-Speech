@@ -28,25 +28,33 @@ class TextStreamBuilder:
     These models read one text token at each frame of the audio, together with the audio of
     that frame. ``build`` makes this text from the parts of a transcript (``TimedTokens``) and
     the times when they are spoken. The tokens of a part go on the frames from the one in
-    which the part starts, and the frames without text get ``padding_id``. The last of these
-    padding frames before a part gets ``end_of_padding_id`` instead, which marks that text
-    starts next.
+    which the part starts, one token per frame. The frames without text get ``padding_id``
+    (Moshi's PAD), and the last of them before a part gets ``end_of_padding_id`` (Moshi's
+    EPAD) instead, which marks that text starts next.
+
+    A part can have more tokens than there are frames before the next part starts.
+    ``keep_and_shift`` chooses what happens to the tokens that do not fit. With False, they
+    are dropped, and the next part starts on time. With True, they are kept on the next
+    frames, and the next part is shifted back by as many frames. Kyutai's moshi-finetune gives
+    this setting the same name and trains with False; J-Moshi places the tokens as True does.
 
     - ``frames_per_second``: frame rate of the audio codec, 12.5 for Moshi's Mimi.
-    - ``padding_id``: token of a frame without text (Moshi's PAD).
-    - ``end_of_padding_id``: token of the last frame of padding before text (Moshi's EPAD).
-    - ``keep_and_shift``: what to do when a part has tokens left at the frame where the next
-      part starts. False drops the rest of the part; True keeps it, placing it first and
-      shifting the next part back. Kyutai's moshi-finetune gives this setting the same name
-      and trains with False; J-Moshi places the tokens as True does.
+    - ``padding_id``: token of a frame without text.
+    - ``end_of_padding_id``: token of the last frame without text before a part.
+    - ``keep_and_shift``: True keeps the tokens that do not fit and shifts the next part
+      back; False drops them.
 
-    Three parts, A with the tokens a1 a2 a3, B with b1 and C with c1, start in the frames
-    below and give these texts::
+    For example, at 12.5 frames per second, "Hello" (tokens Hel and lo) starts at 0.10 s,
+    "there" (one token) at 0.20 s and "how" (one token) at 0.42 s. Only frame 1 is left for
+    "Hello" before "there" starts::
 
-        frame                 0     1    2    3    4     5    6
-        part that starts            A    B               C
-        keep_and_shift=False  EPAD  a1   b1   PAD  EPAD  c1   PAD
-        keep_and_shift=True   EPAD  a1   a2   a3   b1    c1   PAD
+        frame   time (s)    word that starts   keep_and_shift=False   keep_and_shift=True
+        0       0.00-0.08                      EPAD                   EPAD
+        1       0.08-0.16   Hello              Hel                    Hel
+        2       0.16-0.24   there              there                  lo
+        3       0.24-0.32                      PAD                    there
+        4       0.32-0.40                      EPAD                   EPAD
+        5       0.40-0.48   how                how                    how
     """
 
     frames_per_second: float
