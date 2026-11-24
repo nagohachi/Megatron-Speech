@@ -192,14 +192,14 @@ def build_undelayed_streams() -> AlignedStreams:
     return AlignedStreams(streams)
 
 
-def run_kyutai_delay(values: torch.Tensor, stream_delay: StreamDelay) -> torch.Tensor:
+def delay_as_kyutai(values: torch.Tensor, stream_delay: StreamDelay) -> torch.Tensor:
     """Delay one stream as Kyutai's ``_delay_sequence``: roll it and fill its first frames."""
     delayed_values = values.roll(stream_delay.delay, dims=0)
     delayed_values[: stream_delay.delay] = stream_delay.initial_value
     return delayed_values
 
 
-def run_jmoshi_delay(values: torch.Tensor, stream_delay: StreamDelay) -> torch.Tensor:
+def delay_as_jmoshi(values: torch.Tensor, stream_delay: StreamDelay) -> torch.Tensor:
     """Delay one stream as J-Moshi's ``delay_and_pad_streams``, by up to ``MAX_DELAY`` frames.
 
     J-Moshi also puts a frame of initial tokens in front of every stream, which is the shift of
@@ -221,7 +221,7 @@ def test_keeps_length_as_kyutai(undelayed_streams: AlignedStreams) -> None:
     )
     assert delayed_streams.num_frames == NUM_DELAYED_FRAMES
     for name, stream in delayed_streams.streams.items():
-        expected = run_kyutai_delay(undelayed_streams.streams[name].values, STREAM_DELAYS[name])
+        expected = delay_as_kyutai(undelayed_streams.streams[name].values, STREAM_DELAYS[name])
         assert torch.equal(stream.values, expected), name
 
 
@@ -232,7 +232,7 @@ def test_extends_length_as_jmoshi(undelayed_streams: AlignedStreams) -> None:
     )
     assert delayed_streams.num_frames == NUM_DELAYED_FRAMES + MAX_DELAY
     for name, stream in delayed_streams.streams.items():
-        expected = run_jmoshi_delay(undelayed_streams.streams[name].values, STREAM_DELAYS[name])
+        expected = delay_as_jmoshi(undelayed_streams.streams[name].values, STREAM_DELAYS[name])
         assert torch.equal(stream.values, expected), name
 
 
