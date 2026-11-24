@@ -208,10 +208,10 @@ def run_one_row(
         build_config(torch.float32, parallel_state.get_tensor_model_parallel_world_size()),
         ProcessGroupCollection.use_mpu_process_groups(),
     ).cuda()
-    weights = dict(model.module.named_parameters())
+    model_parameters = dict(model.module.named_parameters())
     with torch.no_grad():
         for name, param in reference_model.named_parameters():
-            param.copy_(weights[name])
+            param.copy_(model_parameters[name])
     batch = PackedAudioTextBatch.build(
         [example for examples in microbatch_examples for example in examples], 1, PAD_TOKEN_ID
     )
