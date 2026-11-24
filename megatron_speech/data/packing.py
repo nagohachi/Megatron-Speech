@@ -22,6 +22,11 @@ class AudioTextExample:
     loss_mask: torch.Tensor
 
 
+def calc_segment_length(num_tokens: int, pad_to_multiple: int) -> int:
+    """Return the tokens that an example of ``num_tokens`` tokens takes in a packed row."""
+    return math.ceil(num_tokens / pad_to_multiple) * pad_to_multiple
+
+
 @dataclass
 class PackedAudioTextBatch:
     """Micro-batch whose utterances are packed into one row, in Megatron's THD format.
@@ -66,7 +71,7 @@ class PackedAudioTextBatch:
         input_ids, labels, loss_mask, segment_lengths = [], [], [], []
         for example in examples:
             num_tokens = len(example.input_ids)
-            segment_length = math.ceil(num_tokens / pad_to_multiple) * pad_to_multiple
+            segment_length = calc_segment_length(num_tokens, pad_to_multiple)
             num_padding_tokens = segment_length - num_tokens
             input_ids += [example.input_ids, torch.full((num_padding_tokens,), pad_token_id)]
             # The last token of the utterance has no next token to predict.

@@ -4,10 +4,11 @@ from transformers import Qwen3ASRProcessor
 
 from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
+from megatron_speech.data.dataset import AudioTextExampleBuilder
 from megatron_speech.data.packing import AudioTextExample
 
 
-class Qwen3ASRExampleBuilder:
+class Qwen3ASRExampleBuilder(AudioTextExampleBuilder):
     """Build ``AudioTextExample`` from audio and its transcript, as Qwen3-ASR's processor does.
 
     - Prompt: Hugging Face's ``apply_transcription_request``, tokenized once; each example puts
@@ -58,6 +59,16 @@ class Qwen3ASRExampleBuilder:
                 self.tokenizer.convert_tokens_to_ids("<asr_text>"),
             ]
         self.end_of_turn_id = self.tokenizer.eos_token_id
+
+    @property
+    def sampling_rate(self) -> int:
+        """Sampling rate of the waveforms that ``build`` takes, that of the log-mel."""
+        return self.log_mel_config.sampling_rate
+
+    @property
+    def pad_token_id(self) -> int:
+        """Token id of the padding of packed rows, the tokenizer's padding token."""
+        return self.tokenizer.pad_token_id
 
     def calc_num_audio_tokens(self, num_samples: int) -> int:
         """Count the audio tokens of ``num_samples`` samples of audio: one per encoder frame."""
