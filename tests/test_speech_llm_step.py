@@ -167,7 +167,7 @@ def build_microbatch_examples(data_parallel_size: int) -> list[list[AudioTextExa
 
 
 @pytest.fixture(name="model_outputs")
-def run_training_step(
+def backpropagate_microbatches(
     model: DistributedDataParallel, microbatch_examples: list[list[AudioTextExample]]
 ) -> TrainingStepOutputs:
     """Run the micro-batches of this DP rank through Megatron's schedule with the forward step.
