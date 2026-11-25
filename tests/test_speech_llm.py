@@ -9,14 +9,8 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import gather_from_tensor_model_parallel_region
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from megatron.core.transformer import TransformerConfig
-from megatron.training.models.gpt import GPTModelConfig
 
-from megatron_speech.components.encoders.qwen3_asr import (
-    Qwen3ASREncoderConfig,
-    Qwen3ASREncoderInputs,
-)
-from megatron_speech.components.projectors.mlp import MLPProjectorConfig
+from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderInputs
 from megatron_speech.models.speech_llm import (
     AUDIO_MODALITY,
     ENCODER_NAME,
@@ -24,27 +18,22 @@ from megatron_speech.models.speech_llm import (
     build_speech_llm,
 )
 from tests.numerical_error import TOLERANCES, WITH_DTYPES, calc_relative_error
+from tests.small_speech_llm_config import (
+    AUDIO_TOKEN_ID,
+    ENCODER_CONFIG,
+    VOCAB_SIZE,
+    build_small_speech_llm_config,
+)
 
 pytestmark = [pytest.mark.gpu, WITH_DTYPES]
 logger = logging.getLogger(__name__)
 
-VOCAB_SIZE = 128
-AUDIO_TOKEN_ID = VOCAB_SIZE - 1
 # Mel frames of the utterances of the batch: 13 and 5 encoder frames.
 MEL_LENGTHS = [100, 37]
 # Text tokens before the audio of each utterance, and target tokens after it.
 NUM_PROMPT_TOKENS = 3
 NUM_TARGET_TOKENS = 4
 WORD_EMBEDDINGS = "language_model.embedding.word_embeddings.weight"
-ENCODER_CONFIG = Qwen3ASREncoderConfig(
-    num_mel_bins=32,
-    d_model=32,
-    encoder_layers=1,
-    encoder_attention_heads=4,
-    encoder_ffn_dim=64,
-    downsample_hidden_size=8,
-    n_window_infer=200,
-)
 
 
 @dataclass
@@ -66,29 +55,8 @@ class Batch:
 
 @pytest.fixture(name="config")
 def build_config(dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLLMConfig:
-    """Build a small speech LLM config: a two-layer LLM with rotary positions."""
-    transformer = TransformerConfig(
-        num_layers=2,
-        hidden_size=64,
-        num_attention_heads=4,
-        tensor_model_parallel_size=tensor_parallel_size,
-        bf16=dtype == torch.bfloat16,
-        params_dtype=dtype,
-        hidden_dropout=0.0,
-        attention_dropout=0.0,
-    )
-    return SpeechLLMConfig(
-        llm=GPTModelConfig(
-            transformer=transformer,
-            vocab_size=VOCAB_SIZE,
-            seq_length=64,
-            share_embeddings_and_output_weights=True,
-            position_embedding_type="rope",
-        ),
-        encoder=ENCODER_CONFIG,
-        projector=MLPProjectorConfig(input_size=32, output_size=64, hidden_size=64),
-        audio_token_id=AUDIO_TOKEN_ID,
-    )
+    """Build the small speech LLM config with ``dtype`` parameters over the TP ranks."""
+    return build_small_speech_llm_config(dtype, tensor_parallel_size)
 
 
 @pytest.fixture(name="model")
@@ -314,44 +282,46 @@ def test_accepts_batch_without_audio(model: MimoModel, dtype: torch.dtype) -> No
 
 def test_rejects_projector_input_other_than_encoder_output(config: SpeechLLMConfig) -> None:
     """Check that a projector whose input size is not the encoder's size raises ValueError."""
-    config = replace(config, projector=replace(config.projector, input_size=48))
-    with pytest.raises(ValueError, match=r"projector\.input_size=48 differs from encoder\.d_model"):
+    config = replace(config, projector_config=replace(config.projector_config, input_size=48))
+    with pytest.raises(
+        ValueError, match=r"projector_config\.input_size=48 differs from encoder_config\.d_model"
+    ):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 
 def test_rejects_projector_output_other_than_llm_hidden_size(config: SpeechLLMConfig) -> None:
     """Check that a projector whose output size is not the LLM's hidden size raises ValueError."""
-    config = replace(config, projector=replace(config.projector, output_size=48))
+    config = replace(config, projector_config=replace(config.projector_config, output_size=48))
     with pytest.raises(
-        ValueError, match=r"projector\.output_size=48 differs from llm\.hidden_size"
+        ValueError, match=r"projector_config\.output_size=48 differs from llm_config\.hidden_size"
     ):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 
 def test_rejects_pipeline_parallelism(config: SpeechLLMConfig) -> None:
     """Check that pipeline parallelism, which this MimoModel layout lacks, raises ValueError."""
-    transformer = replace(
-        config.llm.transformer,
+    transformer_config = replace(
+        config.llm_config.transformer,
         pipeline_model_parallel_size=2,
-        pipeline_dtype=config.llm.transformer.params_dtype,
+        pipeline_dtype=config.llm_config.transformer.params_dtype,
     )
-    config = replace(config, llm=replace(config.llm, transformer=transformer))
+    config = replace(config, llm_config=replace(config.llm_config, transformer=transformer_config))
     with pytest.raises(ValueError, match="pipeline_model_parallel_size=1"):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 
 def test_rejects_context_parallelism(config: SpeechLLMConfig) -> None:
     """Check that context parallelism, which the speech LLM does not support, raises ValueError."""
-    transformer = replace(config.llm.transformer, context_parallel_size=2)
-    config = replace(config, llm=replace(config.llm, transformer=transformer))
+    transformer_config = replace(config.llm_config.transformer, context_parallel_size=2)
+    config = replace(config, llm_config=replace(config.llm_config, transformer=transformer_config))
     with pytest.raises(ValueError, match="context_parallel_size=1"):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 
 def test_rejects_llm_without_vocab_size(config: SpeechLLMConfig) -> None:
     """Check that an LLM config without a vocabulary size raises ValueError."""
-    config = replace(config, llm=replace(config.llm, vocab_size=None))
-    with pytest.raises(ValueError, match=r"llm\.vocab_size is not set"):
+    config = replace(config, llm_config=replace(config.llm_config, vocab_size=None))
+    with pytest.raises(ValueError, match=r"llm_config\.vocab_size is not set"):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 
@@ -361,8 +331,8 @@ def test_rejects_vocab_size_not_divisible_by_tp(
     """Check that a vocabulary that TP cannot split, without padding, raises ValueError."""
     if tensor_parallel_size == 1:
         pytest.skip("every vocabulary splits over one rank")
-    config = replace(config, llm=replace(config.llm, vocab_size=VOCAB_SIZE - 1))
-    with pytest.raises(ValueError, match=r"llm\.vocab_size=127 cannot be split"):
+    config = replace(config, llm_config=replace(config.llm_config, vocab_size=VOCAB_SIZE - 1))
+    with pytest.raises(ValueError, match=r"llm_config\.vocab_size=127 cannot be split"):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 

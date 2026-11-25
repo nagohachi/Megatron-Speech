@@ -165,7 +165,9 @@ def build_model(
     BRIDGE.load_weights_hf_to_megatron(hf_pretrained, [model])
     # As in training, Megatron's DistributedDataParallel accumulates the gradients in fp32.
     return DistributedDataParallel(
-        config.llm.transformer, DistributedDataParallelConfig(grad_reduce_in_fp32=True), model
+        config.llm_config.transformer,
+        DistributedDataParallelConfig(grad_reduce_in_fp32=True),
+        model,
     )
 
 

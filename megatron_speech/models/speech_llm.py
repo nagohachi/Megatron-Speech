@@ -25,9 +25,9 @@ class SpeechLLMConfig:
     Each ``audio_token_id`` in the LLM's input takes one projected encoder frame, in order.
     """
 
-    llm: GPTModelConfig
-    encoder: Qwen3ASREncoderConfig
-    projector: MLPProjectorConfig
+    llm_config: GPTModelConfig
+    encoder_config: Qwen3ASREncoderConfig
+    projector_config: MLPProjectorConfig
     audio_token_id: int
 
 
@@ -36,91 +36,95 @@ def build_speech_llm(config: SpeechLLMConfig, pg_collection: ProcessGroupCollect
 
     The encoder and the projector take the tensor parallelism and precision of the LLM.
     """
-    llm = config.llm
-    transformer = llm.transformer
+    llm_config = config.llm_config
+    transformer_config = llm_config.transformer
 
     def check_config() -> None:
         """Raise ValueError for a config that the speech LLM cannot be built from."""
-        if transformer.pipeline_model_parallel_size != 1:
+        if transformer_config.pipeline_model_parallel_size != 1:
             raise ValueError(
-                "a MimoModel with every module on every rank needs "
-                f"pipeline_model_parallel_size=1, got {transformer.pipeline_model_parallel_size}"
+                "a MimoModel with every module on every rank needs pipeline_model_parallel_size=1, "
+                f"got {transformer_config.pipeline_model_parallel_size}"
             )
         # The target loss over packed rows is tested without context parallelism only.
-        if transformer.context_parallel_size != 1:
+        if transformer_config.context_parallel_size != 1:
             raise ValueError(
                 "the speech LLM does not support context parallelism; it needs "
-                f"context_parallel_size=1, got {transformer.context_parallel_size}"
+                f"context_parallel_size=1, got {transformer_config.context_parallel_size}"
             )
-        if config.projector.input_size != config.encoder.d_model:
+        if config.projector_config.input_size != config.encoder_config.d_model:
             raise ValueError(
-                f"projector.input_size={config.projector.input_size} differs from "
-                f"encoder.d_model={config.encoder.d_model}"
+                f"projector_config.input_size={config.projector_config.input_size} differs from "
+                f"encoder_config.d_model={config.encoder_config.d_model}"
             )
-        if config.projector.output_size != transformer.hidden_size:
+        if config.projector_config.output_size != transformer_config.hidden_size:
             raise ValueError(
-                f"projector.output_size={config.projector.output_size} differs from "
-                f"llm.hidden_size={transformer.hidden_size}"
+                f"projector_config.output_size={config.projector_config.output_size} differs from "
+                f"llm_config.hidden_size={transformer_config.hidden_size}"
             )
-        if llm.vocab_size is None:
-            raise ValueError("llm.vocab_size is not set")
-        tp_size = transformer.tensor_model_parallel_size
-        if not llm.should_pad_vocab and llm.vocab_size % tp_size:
+        if llm_config.vocab_size is None:
+            raise ValueError("llm_config.vocab_size is not set")
+        tp_size = transformer_config.tensor_model_parallel_size
+        if not llm_config.should_pad_vocab and llm_config.vocab_size % tp_size:
             raise ValueError(
-                f"llm.vocab_size={llm.vocab_size} cannot be split over {tp_size} tensor parallel "
-                "ranks; set llm.should_pad_vocab to pad it"
+                f"llm_config.vocab_size={llm_config.vocab_size} cannot be split over {tp_size} "
+                "tensor parallel ranks; set llm_config.should_pad_vocab to pad it"
             )
-        if not 0 <= config.audio_token_id < llm.vocab_size:
+        if not 0 <= config.audio_token_id < llm_config.vocab_size:
             raise ValueError(
                 f"audio_token_id={config.audio_token_id} is outside the vocabulary of "
-                f"llm.vocab_size={llm.vocab_size} tokens"
+                f"llm_config.vocab_size={llm_config.vocab_size} tokens"
             )
 
     def build_audio_spec() -> ModuleSpec:
         """Build the spec of the audio modality: the encoder and the projector."""
-        component_params = {"llm_config": transformer, "pg_collection": pg_collection}
+        component_params = {"llm_config": transformer_config, "pg_collection": pg_collection}
         return ModuleSpec(
             module=AudioModalitySubmodules,
             submodules={
                 "encoders": {
                     ENCODER_NAME: ModuleSpec(
                         module=Qwen3ASREncoder,
-                        params={"encoder_config": config.encoder, **component_params},
+                        params={"encoder_config": config.encoder_config, **component_params},
                     )
                 },
                 "input_projections": [
                     ModuleSpec(
                         module=MLPProjector,
-                        params={"projector_config": config.projector, **component_params},
+                        params={"projector_config": config.projector_config, **component_params},
                     )
                 ],
             },
         )
 
     def build_language_model_spec() -> ModuleSpec:
-        """Build the spec of the LLM from the fields of ``config.llm``."""
-        vocab_size = llm.vocab_size
-        if llm.should_pad_vocab:
+        """Build the spec of the LLM from the fields of ``config.llm_config``."""
+        vocab_size = llm_config.vocab_size
+        if llm_config.should_pad_vocab:
             vocab_size = calculate_padded_vocab_size(
-                vocab_size, llm.make_vocab_size_divisible_by, transformer.tensor_model_parallel_size
+                vocab_size,
+                llm_config.make_vocab_size_divisible_by,
+                transformer_config.tensor_model_parallel_size,
             )
         return ModuleSpec(
             module=SpeechLanguageModel,
             params={
-                "config": transformer,
-                "transformer_layer_spec": default_layer_spec(llm, vp_stage=None),
+                "config": transformer_config,
+                "transformer_layer_spec": default_layer_spec(llm_config, vp_stage=None),
                 "vocab_size": vocab_size,
-                "max_sequence_length": llm.seq_length,
-                "fp16_lm_cross_entropy": llm.fp16_lm_cross_entropy,
-                "logit_dtype": llm.logit_dtype,
-                "parallel_output": llm.parallel_output,
-                "share_embeddings_and_output_weights": llm.share_embeddings_and_output_weights,
-                "position_embedding_type": llm.position_embedding_type,
-                "rotary_percent": llm.rotary_percent,
-                "rotary_base": llm.rotary_base,
-                "rope_scaling": llm.rope_scaling,
-                "rope_scaling_factor": llm.rope_scaling_factor,
-                "seq_len_interpolation_factor": llm.seq_len_interpolation_factor,
+                "max_sequence_length": llm_config.seq_length,
+                "fp16_lm_cross_entropy": llm_config.fp16_lm_cross_entropy,
+                "logit_dtype": llm_config.logit_dtype,
+                "parallel_output": llm_config.parallel_output,
+                "share_embeddings_and_output_weights": (
+                    llm_config.share_embeddings_and_output_weights
+                ),
+                "position_embedding_type": llm_config.position_embedding_type,
+                "rotary_percent": llm_config.rotary_percent,
+                "rotary_base": llm_config.rotary_base,
+                "rope_scaling": llm_config.rope_scaling,
+                "rope_scaling_factor": llm_config.rope_scaling_factor,
+                "seq_len_interpolation_factor": llm_config.seq_len_interpolation_factor,
                 # MimoModel scatters the merged embeddings over the sequence parallel ranks.
                 "scatter_embedding_sequence_parallel": False,
                 "pg_collection": pg_collection,
