@@ -67,7 +67,7 @@ class Batch:
 @pytest.fixture(name="config")
 def build_config(dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLLMConfig:
     """Build a small speech LLM config: a two-layer LLM with rotary positions."""
-    transformer = TransformerConfig(
+    transformer_config = TransformerConfig(
         num_layers=2,
         hidden_size=64,
         num_attention_heads=4,
@@ -78,15 +78,15 @@ def build_config(dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLLMConf
         attention_dropout=0.0,
     )
     return SpeechLLMConfig(
-        llm=GPTModelConfig(
-            transformer=transformer,
+        llm_config=GPTModelConfig(
+            transformer=transformer_config,
             vocab_size=VOCAB_SIZE,
             seq_length=64,
             share_embeddings_and_output_weights=True,
             position_embedding_type="rope",
         ),
-        encoder=ENCODER_CONFIG,
-        projector=MLPProjectorConfig(input_size=32, output_size=64, hidden_size=64),
+        encoder_config=ENCODER_CONFIG,
+        projector_config=MLPProjectorConfig(input_size=32, output_size=64, hidden_size=64),
         audio_token_id=AUDIO_TOKEN_ID,
     )
 
@@ -314,44 +314,46 @@ def test_accepts_batch_without_audio(model: MimoModel, dtype: torch.dtype) -> No
 
 def test_rejects_projector_input_other_than_encoder_output(config: SpeechLLMConfig) -> None:
     """Check that a projector whose input size is not the encoder's size raises ValueError."""
-    config = replace(config, projector=replace(config.projector, input_size=48))
-    with pytest.raises(ValueError, match=r"projector\.input_size=48 differs from encoder\.d_model"):
+    config = replace(config, projector_config=replace(config.projector_config, input_size=48))
+    with pytest.raises(
+        ValueError, match=r"projector_config\.input_size=48 differs from encoder_config\.d_model"
+    ):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 
 def test_rejects_projector_output_other_than_llm_hidden_size(config: SpeechLLMConfig) -> None:
     """Check that a projector whose output size is not the LLM's hidden size raises ValueError."""
-    config = replace(config, projector=replace(config.projector, output_size=48))
+    config = replace(config, projector_config=replace(config.projector_config, output_size=48))
     with pytest.raises(
-        ValueError, match=r"projector\.output_size=48 differs from llm\.hidden_size"
+        ValueError, match=r"projector_config\.output_size=48 differs from llm_config\.hidden_size"
     ):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 
 def test_rejects_pipeline_parallelism(config: SpeechLLMConfig) -> None:
     """Check that pipeline parallelism, which this MimoModel layout lacks, raises ValueError."""
-    transformer = replace(
-        config.llm.transformer,
+    transformer_config = replace(
+        config.llm_config.transformer,
         pipeline_model_parallel_size=2,
-        pipeline_dtype=config.llm.transformer.params_dtype,
+        pipeline_dtype=config.llm_config.transformer.params_dtype,
     )
-    config = replace(config, llm=replace(config.llm, transformer=transformer))
+    config = replace(config, llm_config=replace(config.llm_config, transformer=transformer_config))
     with pytest.raises(ValueError, match="pipeline_model_parallel_size=1"):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 
 def test_rejects_context_parallelism(config: SpeechLLMConfig) -> None:
     """Check that context parallelism, which the speech LLM does not support, raises ValueError."""
-    transformer = replace(config.llm.transformer, context_parallel_size=2)
-    config = replace(config, llm=replace(config.llm, transformer=transformer))
+    transformer_config = replace(config.llm_config.transformer, context_parallel_size=2)
+    config = replace(config, llm_config=replace(config.llm_config, transformer=transformer_config))
     with pytest.raises(ValueError, match="context_parallel_size=1"):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 
 def test_rejects_llm_without_vocab_size(config: SpeechLLMConfig) -> None:
     """Check that an LLM config without a vocabulary size raises ValueError."""
-    config = replace(config, llm=replace(config.llm, vocab_size=None))
-    with pytest.raises(ValueError, match=r"llm\.vocab_size is not set"):
+    config = replace(config, llm_config=replace(config.llm_config, vocab_size=None))
+    with pytest.raises(ValueError, match=r"llm_config\.vocab_size is not set"):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 
@@ -361,8 +363,8 @@ def test_rejects_vocab_size_not_divisible_by_tp(
     """Check that a vocabulary that TP cannot split, without padding, raises ValueError."""
     if tensor_parallel_size == 1:
         pytest.skip("every vocabulary splits over one rank")
-    config = replace(config, llm=replace(config.llm, vocab_size=VOCAB_SIZE - 1))
-    with pytest.raises(ValueError, match=r"llm\.vocab_size=127 cannot be split"):
+    config = replace(config, llm_config=replace(config.llm_config, vocab_size=VOCAB_SIZE - 1))
+    with pytest.raises(ValueError, match=r"llm_config\.vocab_size=127 cannot be split"):
         build_speech_llm(config, ProcessGroupCollection.use_mpu_process_groups())
 
 

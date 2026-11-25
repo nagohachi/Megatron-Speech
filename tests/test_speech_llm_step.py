@@ -74,15 +74,15 @@ def build_config(dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLLMConf
         finalize_model_grads_func=finalize_model_grads,
     )
     return SpeechLLMConfig(
-        llm=GPTModelConfig(
+        llm_config=GPTModelConfig(
             transformer=transformer_config,
             vocab_size=VOCAB_SIZE,
             seq_length=1024,
             share_embeddings_and_output_weights=True,
             position_embedding_type="rope",
         ),
-        encoder=ENCODER_CONFIG,
-        projector=MLPProjectorConfig(input_size=32, output_size=64, hidden_size=64),
+        encoder_config=ENCODER_CONFIG,
+        projector_config=MLPProjectorConfig(input_size=32, output_size=64, hidden_size=64),
         audio_token_id=AUDIO_TOKEN_ID,
     )
 
@@ -119,7 +119,9 @@ def build_model(dtype: torch.dtype, data_parallel_size: int) -> DistributedDataP
     model.model_type = ModelType.encoder_or_decoder
     # As in training, the gradients are accumulated in fp32.
     return DistributedDataParallel(
-        config.llm.transformer, DistributedDataParallelConfig(grad_reduce_in_fp32=True), model
+        config.llm_config.transformer,
+        DistributedDataParallelConfig(grad_reduce_in_fp32=True),
+        model,
     )
 
 
@@ -276,8 +278,9 @@ def test_rejects_loss_averaged_per_microbatch() -> None:
     config = build_config(torch.float32, 1)
     config = replace(
         config,
-        llm=replace(
-            config.llm, transformer=replace(config.llm.transformer, calculate_per_token_loss=False)
+        llm_config=replace(
+            config.llm_config,
+            transformer=replace(config.llm_config.transformer, calculate_per_token_loss=False),
         ),
     )
     with pytest.raises(ValueError, match="calculate_per_token_loss=True"):
@@ -286,5 +289,7 @@ def test_rejects_loss_averaged_per_microbatch() -> None:
 
 def test_rejects_log_mel_bins_other_than_encoder_input() -> None:
     """Check that a log-mel whose bins are not the encoder's input bins raises ValueError."""
-    with pytest.raises(ValueError, match=r"feature_size=128 differs from encoder\.num_mel_bins"):
+    with pytest.raises(
+        ValueError, match=r"feature_size=128 differs from encoder_config\.num_mel_bins"
+    ):
         SpeechLLMForwardStep(build_config(torch.float32, 1), Qwen3ASRLogMelConfig())

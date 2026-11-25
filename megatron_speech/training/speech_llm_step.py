@@ -20,18 +20,18 @@ class SpeechLLMForwardStep:
 
     def __init__(self, config: SpeechLLMConfig, log_mel_config: Qwen3ASRLogMelConfig) -> None:
         """Check that the forward step can run with ``config`` and build the log-mel."""
-        if not config.llm.transformer.calculate_per_token_loss:
+        if not config.llm_config.transformer.calculate_per_token_loss:
             raise ValueError(
                 "the forward step of the speech LLM returns the loss summed over the target "
-                "tokens; set llm.transformer.calculate_per_token_loss=True "
+                "tokens; set llm_config.transformer.calculate_per_token_loss=True "
                 "(--calculate-per-token-loss)"
             )
-        if log_mel_config.feature_size != config.encoder.num_mel_bins:
+        if log_mel_config.feature_size != config.encoder_config.num_mel_bins:
             raise ValueError(
                 f"log_mel_config.feature_size={log_mel_config.feature_size} differs from "
-                f"encoder.num_mel_bins={config.encoder.num_mel_bins}"
+                f"encoder_config.num_mel_bins={config.encoder_config.num_mel_bins}"
             )
-        self.encoder_config = config.encoder
+        self.encoder_config = config.encoder_config
         # The forward step is built before Megatron sets the GPU of the rank, so the log-mel
         # moves to the GPU in the first call.
         self.log_mel = Qwen3ASRLogMel(log_mel_config)

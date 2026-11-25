@@ -13,7 +13,7 @@ def build_speech_llm_config(
 ) -> SpeechLLMConfig:
     """Build the speech LLM config of the shape of ``hf_config``, with ``dtype`` parameters."""
     audio_config, text_config = hf_config.audio_config, hf_config.text_config
-    transformer = TransformerConfig(
+    transformer_config = TransformerConfig(
         num_layers=text_config.num_hidden_layers,
         hidden_size=text_config.hidden_size,
         num_attention_heads=text_config.num_attention_heads,
@@ -34,15 +34,15 @@ def build_speech_llm_config(
         params_dtype=dtype,
     )
     return SpeechLLMConfig(
-        llm=GPTModelConfig(
-            transformer=transformer,
+        llm_config=GPTModelConfig(
+            transformer=transformer_config,
             vocab_size=text_config.vocab_size,
             seq_length=text_config.max_position_embeddings,
             share_embeddings_and_output_weights=hf_config.tie_word_embeddings,
             position_embedding_type="rope",
             rotary_base=text_config.rope_parameters["rope_theta"],
         ),
-        encoder=Qwen3ASREncoderConfig(
+        encoder_config=Qwen3ASREncoderConfig(
             num_mel_bins=audio_config.num_mel_bins,
             d_model=audio_config.d_model,
             encoder_layers=audio_config.encoder_layers,
@@ -53,7 +53,7 @@ def build_speech_llm_config(
             n_window_infer=audio_config.n_window_infer,
             activation_function=audio_config.activation_function,
         ),
-        projector=MLPProjectorConfig(
+        projector_config=MLPProjectorConfig(
             input_size=audio_config.d_model,
             output_size=audio_config.output_dim,
             hidden_size=audio_config.d_model,
