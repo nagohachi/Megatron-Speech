@@ -235,6 +235,14 @@ class StreamDelayer:
                     f"{stream_delay.num_delay_frames}"
                 )
 
+    def _check_stream_names(self, streams: AlignedStreams) -> None:
+        """Check that ``streams`` has the streams that ``delays`` names, and no others."""
+        if streams.streams.keys() != self.delays.keys():
+            raise ValueError(
+                f"the recording has the streams {sorted(streams.streams)}, but delays has "
+                f"{sorted(self.delays)}"
+            )
+
     def delay_streams(self, streams: AlignedStreams) -> AlignedStreams:
         """Return the streams of a recording, each delayed by its ``StreamDelay``.
 
@@ -254,11 +262,7 @@ class StreamDelayer:
         ValueError
             If the streams differ from the streams that ``delays`` names.
         """
-        if streams.streams.keys() != self.delays.keys():
-            raise ValueError(
-                f"the recording has the streams {sorted(streams.streams)}, but delays has "
-                f"{sorted(self.delays)}"
-            )
+        self._check_stream_names(streams)
         max_delay = max(stream_delay.num_delay_frames for stream_delay in self.delays.values())
         num_frames = streams.num_frames
 
@@ -303,6 +307,49 @@ class StreamDelayer:
         return AlignedStreams(
             {
                 name: delay_stream(stream, self.delays[name])
+                for name, stream in streams.streams.items()
+            }
+        )
+
+    def prepend_initial_frame(self, streams: AlignedStreams) -> AlignedStreams:
+        """Return the streams with one frame of ``initial_value`` in front of each.
+
+        ``MultiStreamExampleBuilder`` reads each frame of a window to predict the next one, so
+        the first frame of a window is only an input. With this frame in front, the model
+        predicts the first frame from the initial values. Kyutai's moshi-finetune puts the frame
+        in front of each window, and J-Moshi in front of the whole recording before it cuts the
+        recording into windows. The frame is present and is not a target.
+
+        Parameters
+        ----------
+        streams
+            Streams of a window or a recording, which must be the streams that ``delays`` names.
+
+        Returns
+        -------
+        AlignedStreams
+            The streams with one frame more than ``streams``.
+
+        Raises
+        ------
+        ValueError
+            If the streams differ from the streams that ``delays`` names.
+        """
+        self._check_stream_names(streams)
+        return AlignedStreams(
+            {
+                name: FrameStream(
+                    torch.cat(
+                        [
+                            stream.values.new_full(
+                                (1, *stream.values.shape[1:]), self.delays[name].initial_value
+                            ),
+                            stream.values,
+                        ]
+                    ),
+                    torch.cat([stream.present_frame_mask.new_ones(1), stream.present_frame_mask]),
+                    torch.cat([stream.target_frame_mask.new_zeros(1), stream.target_frame_mask]),
+                )
                 for name, stream in streams.streams.items()
             }
         )
