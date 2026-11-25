@@ -14,34 +14,24 @@ from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from megatron.core.transformer import TransformerConfig
-from megatron.training.models.gpt import GPTModelConfig
 
-from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderConfig
 from megatron_speech.components.frontends.qwen3_asr import Qwen3ASRLogMelConfig
-from megatron_speech.components.projectors.mlp import MLPProjectorConfig
 from megatron_speech.data.packing import AudioTextExample, PackedAudioTextBatch
 from megatron_speech.models.speech_llm import SpeechLLMConfig, build_speech_llm
 from megatron_speech.training.speech_llm_step import SpeechLLMForwardStep
 from tests.numerical_error import TOLERANCES, WITH_DTYPES, calc_relative_error
+from tests.small_speech_llm_config import (
+    AUDIO_TOKEN_ID,
+    ENCODER_CONFIG,
+    build_small_speech_llm_config,
+)
 
 logger = logging.getLogger(__name__)
 
-VOCAB_SIZE = 128
-AUDIO_TOKEN_ID = VOCAB_SIZE - 1
 PAD_TOKEN_ID = 0
 NUM_PROMPT_TOKENS = 3
 # Micro-batches that each data parallel rank runs in one training step.
 NUM_MICROBATCHES = 2
-ENCODER_CONFIG = Qwen3ASREncoderConfig(
-    num_mel_bins=32,
-    d_model=32,
-    encoder_layers=1,
-    encoder_attention_heads=4,
-    encoder_ffn_dim=64,
-    downsample_hidden_size=8,
-    n_window_infer=200,
-)
 LOG_MEL_CONFIG = Qwen3ASRLogMelConfig(feature_size=ENCODER_CONFIG.num_mel_bins)
 # Which parallelism the processes of the test run: all of them over DP, or all over TP.
 WITH_PARALLELISMS = pytest.mark.parametrize("parallelism", ["data", "tensor"], scope="module")
@@ -60,31 +50,14 @@ class TrainingStepOutputs:
 
 
 def build_config(dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLLMConfig:
-    """Build a small speech LLM config whose loss is averaged over the target tokens."""
-    transformer_config = TransformerConfig(
-        num_layers=2,
-        hidden_size=64,
-        num_attention_heads=4,
-        tensor_model_parallel_size=tensor_parallel_size,
-        bf16=dtype == torch.bfloat16,
-        params_dtype=dtype,
-        hidden_dropout=0.0,
-        attention_dropout=0.0,
+    """Build the small speech LLM config with the loss averaged over the target tokens."""
+    config = build_small_speech_llm_config(dtype, tensor_parallel_size)
+    transformer_config = replace(
+        config.llm_config.transformer,
         calculate_per_token_loss=True,
         finalize_model_grads_func=finalize_model_grads,
     )
-    return SpeechLLMConfig(
-        llm_config=GPTModelConfig(
-            transformer=transformer_config,
-            vocab_size=VOCAB_SIZE,
-            seq_length=1024,
-            share_embeddings_and_output_weights=True,
-            position_embedding_type="rope",
-        ),
-        encoder_config=ENCODER_CONFIG,
-        projector_config=MLPProjectorConfig(input_size=32, output_size=64, hidden_size=64),
-        audio_token_id=AUDIO_TOKEN_ID,
-    )
+    return replace(config, llm_config=replace(config.llm_config, transformer=transformer_config))
 
 
 FORWARD_STEP = SpeechLLMForwardStep(build_config(torch.float32, 1), LOG_MEL_CONFIG)

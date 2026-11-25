@@ -9,14 +9,8 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import gather_from_tensor_model_parallel_region
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from megatron.core.transformer import TransformerConfig
-from megatron.training.models.gpt import GPTModelConfig
 
-from megatron_speech.components.encoders.qwen3_asr import (
-    Qwen3ASREncoderConfig,
-    Qwen3ASREncoderInputs,
-)
-from megatron_speech.components.projectors.mlp import MLPProjectorConfig
+from megatron_speech.components.encoders.qwen3_asr import Qwen3ASREncoderInputs
 from megatron_speech.models.speech_llm import (
     AUDIO_MODALITY,
     ENCODER_NAME,
@@ -24,27 +18,22 @@ from megatron_speech.models.speech_llm import (
     build_speech_llm,
 )
 from tests.numerical_error import TOLERANCES, WITH_DTYPES, calc_relative_error
+from tests.small_speech_llm_config import (
+    AUDIO_TOKEN_ID,
+    ENCODER_CONFIG,
+    VOCAB_SIZE,
+    build_small_speech_llm_config,
+)
 
 pytestmark = [pytest.mark.gpu, WITH_DTYPES]
 logger = logging.getLogger(__name__)
 
-VOCAB_SIZE = 128
-AUDIO_TOKEN_ID = VOCAB_SIZE - 1
 # Mel frames of the utterances of the batch: 13 and 5 encoder frames.
 MEL_LENGTHS = [100, 37]
 # Text tokens before the audio of each utterance, and target tokens after it.
 NUM_PROMPT_TOKENS = 3
 NUM_TARGET_TOKENS = 4
 WORD_EMBEDDINGS = "language_model.embedding.word_embeddings.weight"
-ENCODER_CONFIG = Qwen3ASREncoderConfig(
-    num_mel_bins=32,
-    d_model=32,
-    encoder_layers=1,
-    encoder_attention_heads=4,
-    encoder_ffn_dim=64,
-    downsample_hidden_size=8,
-    n_window_infer=200,
-)
 
 
 @dataclass
@@ -66,29 +55,8 @@ class Batch:
 
 @pytest.fixture(name="config")
 def build_config(dtype: torch.dtype, tensor_parallel_size: int) -> SpeechLLMConfig:
-    """Build a small speech LLM config: a two-layer LLM with rotary positions."""
-    transformer_config = TransformerConfig(
-        num_layers=2,
-        hidden_size=64,
-        num_attention_heads=4,
-        tensor_model_parallel_size=tensor_parallel_size,
-        bf16=dtype == torch.bfloat16,
-        params_dtype=dtype,
-        hidden_dropout=0.0,
-        attention_dropout=0.0,
-    )
-    return SpeechLLMConfig(
-        llm_config=GPTModelConfig(
-            transformer=transformer_config,
-            vocab_size=VOCAB_SIZE,
-            seq_length=64,
-            share_embeddings_and_output_weights=True,
-            position_embedding_type="rope",
-        ),
-        encoder_config=ENCODER_CONFIG,
-        projector_config=MLPProjectorConfig(input_size=32, output_size=64, hidden_size=64),
-        audio_token_id=AUDIO_TOKEN_ID,
-    )
+    """Build the small speech LLM config with ``dtype`` parameters over the TP ranks."""
+    return build_small_speech_llm_config(dtype, tensor_parallel_size)
 
 
 @pytest.fixture(name="model")
