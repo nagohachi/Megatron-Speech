@@ -89,6 +89,16 @@ def test_pads_nothing_to_multiple_of_one(examples: list[MultiStreamExample]) -> 
     assert batch.audio_decoder_token_indices.tolist() == [0, 2, 4]
 
 
+def test_pads_windows_shorter_than_multiple(examples: list[MultiStreamExample]) -> None:
+    """Check that windows shorter than ``pad_to_multiple`` are padded to one multiple each."""
+    batch = PackedMultiStreamBatch.build(examples, pad_to_multiple=4)
+    assert batch.input_ids.tolist() == [[10, 11, 12, 0, 30, 31, 0, 0]]
+    assert batch.position_ids.tolist() == [[0, 1, 2, 3, 0, 1, 2, 3]]
+    assert batch.cu_seqlens.tolist() == [0, 4, 8]
+    assert batch.modality_token_indices["codebook"].tolist() == [1, 2, 4]
+    assert batch.audio_decoder_token_indices.tolist() == [0, 2, 5]
+
+
 def test_packs_window_without_audio(examples: list[MultiStreamExample]) -> None:
     """Check that a window without the codebook and without audio targets packs with the others.
 
@@ -123,10 +133,24 @@ def test_rejects_pad_to_multiple_below_one(examples: list[MultiStreamExample]) -
         PackedMultiStreamBatch.build(examples, pad_to_multiple=0)
 
 
-def test_rejects_windows_of_different_streams(examples: list[MultiStreamExample]) -> None:
+# The second window lacks the codebook as an input, or as a stream of the audio decoder.
+@pytest.mark.parametrize(
+    ("changed_fields", "message"),
+    [
+        (
+            {"modality_positions": {"text": torch.tensor([0, 1])}, "stream_inputs": {}},
+            r"window 1 has the streams \['text'\]",
+        ),
+        ({"audio_targets": {}, "audio_target_masks": {}}, r"the audio decoder streams \[\], but"),
+    ],
+    ids=["streams", "audio-decoder-streams"],
+)
+def test_rejects_windows_of_different_streams(
+    examples: list[MultiStreamExample],
+    changed_fields: dict[str, dict[str, torch.Tensor]],
+    message: str,
+) -> None:
     """Check that windows with different streams raise ValueError that names the window."""
-    example_without_codebook = replace(
-        examples[1], modality_positions={"text": torch.tensor([0, 1])}, stream_inputs={}
-    )
-    with pytest.raises(ValueError, match=r"window 1 has the streams \['text'\]"):
-        PackedMultiStreamBatch.build([examples[0], example_without_codebook], PAD_TO_MULTIPLE)
+    changed_example = replace(examples[1], **changed_fields)
+    with pytest.raises(ValueError, match=message):
+        PackedMultiStreamBatch.build([examples[0], changed_example], PAD_TO_MULTIPLE)
