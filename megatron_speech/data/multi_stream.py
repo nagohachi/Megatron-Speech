@@ -239,16 +239,22 @@ class PackedMultiStreamBatch:
             raise ValueError(f"pad_to_multiple must be at least 1, got {pad_to_multiple}")
         stream_names = examples[0].modality_positions.keys()
         audio_decoder_stream_names = examples[0].audio_targets.keys()
-        for index, example in enumerate(examples):
-            if (
-                example.modality_positions.keys() != stream_names
-                or example.audio_targets.keys() != audio_decoder_stream_names
-            ):
-                raise ValueError(
-                    f"window {index} has the streams {sorted(example.modality_positions)} and "
-                    f"the audio decoder streams {sorted(example.audio_targets)}, but window 0 "
-                    f"has {sorted(stream_names)} and {sorted(audio_decoder_stream_names)}"
-                )
+
+        def check_same_streams() -> None:
+            """Check that every window has the streams and the audio decoder streams of window 0."""
+            for index, example in enumerate(examples):
+                if (
+                    example.modality_positions.keys() != stream_names
+                    or example.audio_targets.keys() != audio_decoder_stream_names
+                ):
+                    raise ValueError(
+                        f"window {index} has the streams {sorted(example.modality_positions)} "
+                        f"and the audio decoder streams {sorted(example.audio_targets)}, but "
+                        f"window 0 has {sorted(stream_names)} and "
+                        f"{sorted(audio_decoder_stream_names)}"
+                    )
+
+        check_same_streams()
         segment_lengths = [
             math.ceil(len(example.input_ids) / pad_to_multiple) * pad_to_multiple
             for example in examples
