@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from itertools import accumulate
 from typing import Self
@@ -5,7 +6,6 @@ from typing import Self
 import torch
 
 from megatron_speech.data.aligned_streams import AlignedStreams
-from megatron_speech.data.packing import PackedAudioTextBatch
 
 # Name that MimoModel gives the text, which the stream of text tokens takes too.
 TEXT_STREAM_NAME = "text"
@@ -250,7 +250,7 @@ class PackedMultiStreamBatch:
                     f"has {sorted(stream_names)} and {sorted(audio_decoder_stream_names)}"
                 )
         segment_lengths = [
-            PackedAudioTextBatch.calc_segment_length(len(example.input_ids), pad_to_multiple)
+            math.ceil(len(example.input_ids) / pad_to_multiple) * pad_to_multiple
             for example in examples
         ]
         segment_starts = list(accumulate(segment_lengths, initial=0))
