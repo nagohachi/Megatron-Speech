@@ -1,4 +1,7 @@
+import math
 from dataclasses import dataclass
+from itertools import accumulate
+from typing import Self
 
 import torch
 
@@ -163,5 +166,144 @@ class MultiStreamExampleBuilder:
             audio_target_masks={
                 name: target_frame_masks[name][audio_decoder_positions]
                 for name in self.audio_decoder_stream_names
+            },
+        )
+
+
+@dataclass
+class PackedMultiStreamBatch:
+    """Micro-batch of ``MultiStreamMimoModel`` whose windows are packed into one row.
+
+    The row is in Megatron's THD format. Each window is given one segment of the row: its
+    positions, then padding. Attention is computed within each segment, and the padding comes
+    after the positions, so the outputs at the positions do not depend on it. The padding holds
+    no modality, so the model reads no input there, and its text loss weight is 0.
+
+    The fields that ``MultiStreamMimoModel.forward`` takes as they are have the names of its
+    arguments. The forward step puts ``stream_inputs`` into ``modality_inputs`` and the audio
+    targets into ``audio_decoder_inputs``, in the form that the encoders and the audio decoder of
+    the model take. Positions are flat indices, which in one row are the positions in the row.
+
+    - ``input_ids``, ``labels``, ``loss_mask``: ``[1, num_row_positions]`` as in
+      ``MultiStreamExample``, with 0 at the padding.
+    - ``position_ids``: ``[1, num_row_positions]`` positions that start at 0 in each segment.
+    - ``cu_seqlens``: ``[num_windows + 1]`` int32 cumulative segment lengths.
+    - ``max_seqlen``: 0-dim tensor, the length of the longest segment.
+    - ``modality_token_indices``: positions in the row of each stream, the text included.
+    - ``stream_inputs``: values of each stream other than the text at its positions, window
+      after window.
+    - ``audio_decoder_token_indices``: positions in the row that predict the audio.
+    - ``audio_targets``, ``audio_target_masks``: as in ``MultiStreamExample``, window after
+      window.
+    """
+
+    input_ids: torch.Tensor
+    labels: torch.Tensor
+    loss_mask: torch.Tensor
+    position_ids: torch.Tensor
+    cu_seqlens: torch.Tensor
+    max_seqlen: torch.Tensor
+    modality_token_indices: dict[str, torch.Tensor]
+    stream_inputs: dict[str, torch.Tensor]
+    audio_decoder_token_indices: torch.Tensor
+    audio_targets: dict[str, torch.Tensor]
+    audio_target_masks: dict[str, torch.Tensor]
+
+    @classmethod
+    def build(cls, examples: list[MultiStreamExample], pad_to_multiple: int) -> Self:
+        """Pack ``examples`` into one row, with each padded to a multiple of ``pad_to_multiple``.
+
+        Parameters
+        ----------
+        examples
+            Examples of the windows of the micro-batch, all with the same streams.
+        pad_to_multiple
+            Multiple that each segment is padded to. With sequence parallelism, the row is
+            split over the tensor parallel ranks, so it is the tensor parallel size; without,
+            it is 1. ``MultiStreamMimoModel`` rejects context parallelism.
+
+        Returns
+        -------
+        Self
+            The packed micro-batch.
+
+        Raises
+        ------
+        ValueError
+            If ``examples`` is empty, ``pad_to_multiple`` is below 1, or the examples have
+            different streams.
+        """
+        if not examples:
+            raise ValueError("examples is empty; a micro-batch needs at least one window")
+        if pad_to_multiple < 1:
+            raise ValueError(f"pad_to_multiple must be at least 1, got {pad_to_multiple}")
+        stream_names = examples[0].modality_positions.keys()
+        audio_decoder_stream_names = examples[0].audio_targets.keys()
+
+        def check_same_streams() -> None:
+            """Check that every window has the streams and the audio decoder streams of window 0."""
+            for index, example in enumerate(examples):
+                if (
+                    example.modality_positions.keys() != stream_names
+                    or example.audio_targets.keys() != audio_decoder_stream_names
+                ):
+                    raise ValueError(
+                        f"window {index} has the streams {sorted(example.modality_positions)} "
+                        f"and the audio decoder streams {sorted(example.audio_targets)}, but "
+                        f"window 0 has {sorted(stream_names)} and "
+                        f"{sorted(audio_decoder_stream_names)}"
+                    )
+
+        check_same_streams()
+        segment_lengths = [
+            math.ceil(len(example.input_ids) / pad_to_multiple) * pad_to_multiple
+            for example in examples
+        ]
+        segment_starts = list(accumulate(segment_lengths, initial=0))
+
+        def pad_and_cat(tensors: list[torch.Tensor]) -> torch.Tensor:
+            """Pad each tensor of a window with 0 to its segment, and put them in one row."""
+            return torch.cat(
+                [
+                    torch.cat([tensor, tensor.new_zeros(length - len(tensor))])
+                    for tensor, length in zip(tensors, segment_lengths, strict=True)
+                ]
+            )[None]
+
+        def offset_and_cat(positions: list[torch.Tensor]) -> torch.Tensor:
+            """Move the positions of each window to its segment, and put them in one row."""
+            return torch.cat(
+                [
+                    window_positions + start
+                    for window_positions, start in zip(positions, segment_starts[:-1], strict=True)
+                ]
+            )
+
+        return cls(
+            input_ids=pad_and_cat([example.input_ids for example in examples]),
+            labels=pad_and_cat([example.labels for example in examples]),
+            loss_mask=pad_and_cat([example.loss_mask for example in examples]),
+            position_ids=torch.cat([torch.arange(length) for length in segment_lengths])[None],
+            cu_seqlens=torch.tensor(segment_starts, dtype=torch.int32),
+            max_seqlen=torch.tensor(max(segment_lengths)),
+            modality_token_indices={
+                name: offset_and_cat([example.modality_positions[name] for example in examples])
+                for name in stream_names
+            },
+            stream_inputs={
+                name: torch.cat([example.stream_inputs[name] for example in examples])
+                for name in stream_names
+                if name != TEXT_STREAM_NAME
+            },
+            audio_decoder_token_indices=offset_and_cat(
+                [example.audio_decoder_positions for example in examples]
+            ),
+            audio_targets={
+                name: torch.cat([example.audio_targets[name] for example in examples])
+                for name in audio_decoder_stream_names
+            },
+            audio_target_masks={
+                name: torch.cat([example.audio_target_masks[name] for example in examples])
+                for name in audio_decoder_stream_names
             },
         )
